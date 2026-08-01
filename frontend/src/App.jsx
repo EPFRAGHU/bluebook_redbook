@@ -3,10 +3,11 @@ import {
   Search, Building, ChevronLeft, ChevronRight, MapPin,
   Users, Mail, Shield, ShieldAlert, Gavel, Calendar, X,
   UserCheck, Plus, Trash2, BookOpen, FileText, Clock,
-  CheckCircle2, ListChecks, IndianRupee
+  CheckCircle2, ListChecks, IndianRupee, BarChart3,
+  Stamp, Landmark, AlertTriangle, LogOut
 } from 'lucide-react';
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = "/api";
 
 const ACCOUNT_HEADS = [
   { key: 'account1', label: 'A/c 1 (PF Contribution)' },
@@ -29,10 +30,48 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
 
-  // Navigation Tabs: 'search' | 'bluebook' | 'active_7a' | 'hearings_today' | 'redbook'
+  // Login State
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('epfo_auth') === 'true';
+  });
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    setLoginError('');
+    setIsLoggingIn(true);
+    setTimeout(() => {
+      const { username, password } = loginForm;
+      if (username.trim() === 'admin' && password === 'admin123') {
+        localStorage.setItem('epfo_auth', 'true');
+        setIsAuthenticated(true);
+        setLoginForm({ username: '', password: '' });
+      } else {
+        setLoginError('Invalid username or password. Please try again.');
+      }
+      setIsLoggingIn(false);
+    }, 400);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('epfo_auth');
+    setIsAuthenticated(false);
+  };
+
+  // Navigation Tabs: 'search' | 'bluebook' | 'active_7a' | 'hearings_today' | 'redbook' | 'dashboard'
   const [activeTab, setActiveTab] = useState('search');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedEst, setSelectedEst] = useState(null);
+
+  // Monthly Dashboard State
+  const [monthlyData, setMonthlyData] = useState({ fy: '', months: [] });
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [fyYear, setFyYear] = useState(() => {
+    const now = new Date();
+    return now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  });
 
   // Inquiry Officers State
   const [officers, setOfficers] = useState([
@@ -77,6 +116,33 @@ export default function App() {
   });
   const [isFinalizing, setIsFinalizing] = useState(false);
 
+  // Record Collection Modal
+  const [showCollectionModal, setShowCollectionModal] = useState(false);
+  const [collectionCase, setCollectionCase] = useState(null);
+  const [collectionForm, setCollectionForm] = useState({
+    collection_date: new Date().toISOString().split('T')[0],
+    mode: 'CHEQUE',
+    instrument_no: '',
+    account1: 0, account2: 0, account10: 0, account21: 0, account22: 0
+  });
+  const [isSubmittingCollection, setIsSubmittingCollection] = useState(false);
+
+  // Case Tracking Flags (8F Issued / NIR / Bank A/c Attached)
+  const [nirModalCase, setNirModalCase] = useState(null);
+  const [showNirModal, setShowNirModal] = useState(false);
+  const [nirForm, setNirForm] = useState({ nir_status: 'NIR', nir_cause: 'High Court', nir_case_no: '', nir_case_date: '' });
+  const [isSavingNir, setIsSavingNir] = useState(false);
+
+  // Collections Register State
+  const [collectionsData, setCollectionsData] = useState({ data: [], total: 0 });
+  const [monthlyCollections, setMonthlyCollections] = useState({ fy: '', months: [] });
+  const [collectionMonth, setCollectionMonth] = useState('');
+  const [collectionsLoading, setCollectionsLoading] = useState(false);
+  const [collectionsFy, setCollectionsFy] = useState(() => {
+    const now = new Date();
+    return now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  });
+
   const isCaseTab = ['bluebook', 'active_7a', 'hearings_today'].includes(activeTab);
 
   // Initial Fetch & Fetch on Page/Limit/Tab Change
@@ -94,9 +160,28 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
+  // Monthly Dashboard load
+  useEffect(() => {
+    fetchMonthly(fyYear);
+  }, [fyYear]);
+
+  // Collections Register load
+  useEffect(() => {
+    if (activeTab === 'collections') {
+      fetchCollections(searchTerm, collectionMonth);
+      fetchMonthlyCollections(collectionsFy);
+    }
+  }, [activeTab, collectionMonth, collectionsFy]);
+
   const fetchEstablishments = async (query, p, l, tab) => {
     setIsLoading(true);
     try {
+      if (tab === 'search' && !query.trim()) {
+        setSearchResults([]);
+        setTotalRecords(0);
+        setIsLoading(false);
+        return;
+      }
       let endpoint = `${API_BASE}/establishments/search?q=${encodeURIComponent(query)}&page=${p}&limit=${l}`;
 
       if (tab === 'bluebook') {
@@ -138,9 +223,168 @@ export default function App() {
       .catch(console.error);
   };
 
+  const fetchMonthly = (year) => {
+    setMonthlyLoading(true);
+    fetch(`${API_BASE}/dashboard/monthly?year=${year}`)
+      .then(r => r.json())
+      .then(data => setMonthlyData(data || { fy: '', months: [] }))
+      .catch(err => {
+        console.error("Monthly dashboard error:", err);
+        setMonthlyData({ fy: '', months: [] });
+      })
+      .finally(() => setMonthlyLoading(false));
+  };
+
+  const fetchCollections = (q, month) => {
+    setCollectionsLoading(true);
+    let url = `${API_BASE}/collections?q=${encodeURIComponent(q || '')}&page=1&limit=500`;
+    if (month) url += `&month=${month}`;
+    fetch(url)
+      .then(r => r.json())
+      .then(data => setCollectionsData(data || { data: [], total: 0 }))
+      .catch(err => {
+        console.error("Collections fetch error:", err);
+        setCollectionsData({ data: [], total: 0 });
+      })
+      .finally(() => setCollectionsLoading(false));
+  };
+
+  const fetchMonthlyCollections = (year) => {
+    fetch(`${API_BASE}/collections/monthly?year=${year}`)
+      .then(r => r.json())
+      .then(data => setMonthlyCollections(data || { fy: '', months: [] }))
+      .catch(err => {
+        console.error("Monthly collections error:", err);
+        setMonthlyCollections({ fy: '', months: [] });
+      });
+  };
+
+  const openCollectionModal = (r) => {
+    setCollectionCase(r);
+    setCollectionForm({
+      collection_date: new Date().toISOString().split('T')[0],
+      mode: 'CHEQUE',
+      instrument_no: '',
+      account1: 0, account2: 0, account10: 0, account21: 0, account22: 0
+    });
+    setShowCollectionModal(true);
+  };
+
+  const submitCollection = async (e) => {
+    e.preventDefault();
+    if (!collectionCase) return;
+    setIsSubmittingCollection(true);
+    try {
+      const payload = {
+        case_no: collectionCase.case_no,
+        collection_date: collectionForm.collection_date,
+        mode: collectionForm.mode,
+        instrument_no: collectionForm.instrument_no,
+        account1: parseFloat(collectionForm.account1) || 0,
+        account2: parseFloat(collectionForm.account2) || 0,
+        account10: parseFloat(collectionForm.account10) || 0,
+        account21: parseFloat(collectionForm.account21) || 0,
+        account22: parseFloat(collectionForm.account22) || 0,
+      };
+      const res = await fetch(`${API_BASE}/collections`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`✅ Payment recorded!\nTotal Collected: ₹${fmtMoney(data.total_collected)}`);
+        setShowCollectionModal(false);
+        fetchCollections(searchTerm, collectionMonth);
+        fetchMonthlyCollections(collectionsFy);
+        fetchEstablishments(searchTerm, page, limit, activeTab);
+        fetchMonthly(fyYear);
+      } else {
+        const errData = await res.json();
+        alert(`Error: ${errData.detail || 'Failed to record collection'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to connect to backend server.");
+    } finally {
+      setIsSubmittingCollection(false);
+    }
+  };
+
   const refreshCurrentView = () => {
     fetchEstablishments(searchTerm, page, limit, activeTab);
     fetchStats();
+    fetchMonthly(fyYear);
+    fetchCollections(searchTerm, collectionMonth);
+    fetchMonthlyCollections(collectionsFy);
+  };
+
+  // Update a tracking flag (8F / NIR / Bank A/c Attached) on the backend, then refresh the row in place.
+  const updateCaseTracking = async (c, updates, cb) => {
+    try {
+      const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(c.case_no)}/tracking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(prev => prev.map(r =>
+          r.case_no === c.case_no ? { ...r, ...data, ...(updates.nir_status !== undefined ? { nir_status: updates.nir_status } : {}) } : r
+        ));
+        if (cb) cb();
+        return true;
+      }
+      const errData = await res.json();
+      alert(`Error: ${errData.detail || 'Failed to update case'}`);
+      return false;
+    } catch (err) {
+      console.error(err);
+      alert("Failed to connect to backend server.");
+      return false;
+    }
+  };
+
+  const toggleF8 = (c) => {
+    const next = !(c.f8_issued || 0);
+    updateCaseTracking(c, { f8_issued: next });
+  };
+
+  const toggleBankAttached = (c) => {
+    const next = !(c.bank_ac_attached || 0);
+    updateCaseTracking(c, { bank_ac_attached: next });
+  };
+
+  const toggleNir = (c) => {
+    // If already NIR, revert to IR (no window). If currently IR, open the NIR cause window.
+    if ((c.nir_status || 'IR') === 'NIR') {
+      updateCaseTracking(c, { nir_status: 'IR' });
+    } else {
+      setNirModalCase(c);
+      setNirForm({ nir_status: 'NIR', nir_cause: 'High Court', nir_case_no: c.nir_case_no || '', nir_case_date: c.nir_case_date || '' });
+      setShowNirModal(true);
+    }
+  };
+
+  const submitNir = async (e) => {
+    e.preventDefault();
+    if (!nirModalCase) return;
+    if (!nirForm.nir_case_no.trim() || !nirForm.nir_case_date) {
+      alert("Case No. and Case Date are required for NIR.");
+      return;
+    }
+    setIsSavingNir(true);
+    try {
+      const ok = await updateCaseTracking(nirModalCase, {
+        nir_status: 'NIR',
+        nir_cause: nirForm.nir_cause,
+        nir_case_no: nirForm.nir_case_no.trim(),
+        nir_case_date: nirForm.nir_case_date
+      });
+      if (ok) setShowNirModal(false);
+    } finally {
+      setIsSavingNir(false);
+    }
   };
 
   const handleAddOfficer = (e) => {
@@ -188,6 +432,7 @@ export default function App() {
           first_hearing_date: ''
         });
         fetchStats();
+        fetchMonthly(fyYear);
       } else {
         const errData = await res.json();
         alert(`Error initiating inquiry: ${errData.detail || 'Failed to submit'}`);
@@ -292,6 +537,7 @@ export default function App() {
         closeCaseDetail();
         setActiveTab('redbook');
         setPage(1);
+        fetchMonthly(fyYear);
       } else {
         const errData = await res.json();
         alert(`Error: ${errData.detail || 'Failed to finalize order'}`);
@@ -310,19 +556,44 @@ export default function App() {
     setActiveTab(tab);
     setPage(1);
     setSearchTerm('');
+    if (tab === 'dashboard') fetchMonthly(fyYear);
+    if (tab === 'collections') {
+      fetchCollections('', collectionMonth);
+      fetchMonthlyCollections(collectionsFy);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 p-6 font-sans">
-      {/* HEADER WITH NAV BUTTONS */}
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-        <div>
-          <span className="bg-blue-600 text-white text-xs px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">EPFO RO Bhubaneswar</span>
-          <h1 className="text-2xl font-bold text-slate-800 mt-1">Section Inquiry & Recovery Portal</h1>
-        </div>
+    <>
+      {!isAuthenticated ? (
+        <LoginPage
+          loginForm={loginForm}
+          setLoginForm={setLoginForm}
+          loginError={loginError}
+          isLoggingIn={isLoggingIn}
+          handleLogin={handleLogin}
+        />
+      ) : (
+      <div className="min-h-screen bg-slate-100 p-6 font-sans">
+        {/* HEADER WITH NAV BUTTONS */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+          <div>
+            <span className="bg-blue-600 text-white text-xs px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">EPFO RO Bhubaneswar</span>
+            <h1 className="text-2xl font-bold text-slate-800 mt-1">Inquiry & Recovery Portal</h1>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 mt-4 md:mt-0">
+            <span className="text-xs font-semibold text-slate-500 mr-1">Signed in: <span className="text-blue-700 font-bold">admin</span></span>
+            <button
+              onClick={handleLogout}
+              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 border border-slate-300">
+              <LogOut size={15} className="text-rose-600" /> Logout
+            </button>
+          </div>
+        </header>
 
         {/* TOP NAVIGATION BUTTONS */}
-        <div className="mt-4 md:mt-0 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 mb-6">
           <button
             onClick={() => setShowOfficerModal(true)}
             className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 border border-slate-300">
@@ -346,8 +617,19 @@ export default function App() {
             className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${activeTab === 'redbook' ? 'bg-rose-600 text-white shadow' : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'}`}>
             <BookOpen size={15} /> Red Book (Defaulters)
           </button>
+
+          <button
+            onClick={() => switchTab('collections')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${activeTab === 'collections' ? 'bg-teal-600 text-white shadow' : 'bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200'}`}>
+            <IndianRupee size={15} /> Collections
+          </button>
+
+          <button
+            onClick={() => switchTab('dashboard')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${activeTab === 'dashboard' ? 'bg-violet-600 text-white shadow' : 'bg-violet-50 text-violet-700 hover:bg-violet-100 border border-violet-200'}`}>
+            <BarChart3 size={15} /> Monthly Dashboard
+          </button>
         </div>
-      </header>
 
       {/* DASHBOARD STATS - ALL CLICKABLE */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -392,10 +674,223 @@ export default function App() {
         </div>
       </div>
 
+      {/* MONTHLY DASHBOARD VIEW */}
+      {activeTab === 'dashboard' && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5">
+            <div>
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <BarChart3 size={20} className="text-violet-600" /> Monthly Inquiry Register
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Running balance of inquiries held from April to March (Financial Year {monthlyData.fy || '...'})
+              </p>
+            </div>
+
+            {/* FINANCIAL YEAR SWITCHER */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setFyYear(fyYear - 1)}
+                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100">
+                <ChevronLeft size={16} />
+              </button>
+              <span className="px-4 py-1.5 bg-violet-50 border border-violet-200 text-violet-700 rounded-lg text-sm font-bold">
+                FY {monthlyData.fy || `${fyYear}-${String(fyYear + 1).slice(-2)}`}
+              </span>
+              <button
+                onClick={() => setFyYear(fyYear + 1)}
+                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100">
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+
+          {monthlyLoading ? (
+            <div className="text-center py-16 text-slate-400 font-medium">Loading monthly register...</div>
+          ) : monthlyData.months && monthlyData.months.length > 0 ? (
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-violet-50 text-xl font-bold text-violet-800 uppercase">
+                  <tr>
+                    <th className="p-4 text-center">Month</th>
+                    <th className="p-4 text-center">Opening Balance</th>
+                    <th className="p-4 text-center">Added During Month</th>
+                    <th className="p-4 text-center">Disposed During Month</th>
+                    <th className="p-4 text-center">Closing Balance</th>
+                  </tr>
+                </thead>
+                <tbody className="text-lg divide-y divide-slate-100">
+                  {monthlyData.months.map((mo, idx) => (
+                    <tr key={idx} className={idx === monthlyData.months.length - 1 ? 'bg-violet-50/40 font-semibold' : 'hover:bg-slate-50'}>
+                      <td className="p-4 font-bold text-slate-800">{mo.month}</td>
+                      <td className="p-4 text-right font-mono text-slate-600">{mo.opening}</td>
+                      <td className="p-4 text-right font-mono text-emerald-700">+{mo.added}</td>
+                      <td className="p-4 text-right font-mono text-rose-700">-{mo.disposed}</td>
+                      <td className="p-4 text-right font-mono font-bold text-violet-700">{mo.closing}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-slate-50 text-lg font-bold text-slate-700">
+                  <tr>
+                    <td className="p-4">Financial Year Total</td>
+                    <td className="p-4 text-right font-mono">{monthlyData.months[0]?.opening ?? 0}</td>
+                    <td className="p-4 text-right font-mono text-emerald-700">+{monthlyData.months.reduce((s, m) => s + (m.added || 0), 0)}</td>
+                    <td className="p-4 text-right font-mono text-rose-700">-{monthlyData.months.reduce((s, m) => s + (m.disposed || 0), 0)}</td>
+                    <td className="p-4 text-right font-mono text-violet-700">{monthlyData.months[monthlyData.months.length - 1]?.closing ?? 0}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-xl text-slate-400">
+              No inquiry data available for this financial year.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* COLLECTIONS REGISTER VIEW */}
+      {activeTab === 'collections' && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5">
+            <div>
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <IndianRupee size={20} className="text-teal-600" /> Collection Register (Month-wise)
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Payments received (Cheque / DD) against Red Book cases, stored month-wise.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <select
+                value={collectionMonth}
+                onChange={(e) => setCollectionMonth(e.target.value)}
+                className="p-2 border border-slate-300 rounded-lg outline-none font-semibold bg-white text-xs">
+                <option value="">All Months</option>
+                {monthlyCollections.months.map((mo, i) => (
+                  <option key={i} value={mo.ym || ''}>
+                    {mo.month}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs font-bold text-slate-500">FY {monthlyCollections.fy || `...`}</span>
+            </div>
+          </div>
+
+          {/* MONTH-WISE ACCOUNT SUMMARY */}
+          {monthlyCollections.months && monthlyCollections.months.length > 0 && (
+            <div className="overflow-x-auto border border-slate-200 rounded-xl mb-5">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-teal-50 text-base font-bold text-teal-800 uppercase">
+                  <tr>
+                    <th className="p-3 text-center">Month</th>
+                    <th className="p-3 text-center">A/c 1</th>
+                    <th className="p-3 text-center">A/c 2</th>
+                    <th className="p-3 text-center">A/c 10</th>
+                    <th className="p-3 text-center">A/c 21</th>
+                    <th className="p-3 text-center">A/c 22</th>
+                    <th className="p-3 text-center">Total Collected</th>
+                    <th className="p-3 text-center">Entries</th>
+                  </tr>
+                </thead>
+                <tbody className="text-xs divide-y divide-slate-100">
+                  {monthlyCollections.months.map((mo, i) => (
+                    <tr key={i} className={mo.total > 0 ? 'font-semibold bg-teal-50/30' : 'hover:bg-slate-50'}>
+                      <td className="p-3 font-bold text-slate-800">{mo.month}</td>
+                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account1)}` : '—'}</td>
+                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account2)}` : '—'}</td>
+                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account10)}` : '—'}</td>
+                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account21)}` : '—'}</td>
+                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account22)}` : '—'}</td>
+                      <td className="p-3 text-right font-mono font-bold text-teal-700">{mo.total ? `₹${fmtMoney(mo.total)}` : '—'}</td>
+                      <td className="p-3 text-center font-bold text-slate-700">{mo.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* COLLECTION ENTRIES */}
+          <div className="relative mb-4">
+            <input
+              type="text"
+              placeholder="Search by Est. Name, Est Code, or Case No..."
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                const t = setTimeout(() => fetchCollections(e.target.value, collectionMonth), 300);
+                return () => clearTimeout(t);
+              }}
+              className="w-full pl-4 pr-10 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none text-slate-700 font-medium"
+            />
+          </div>
+
+          {collectionsLoading ? (
+            <div className="text-center py-16 text-slate-400 font-medium">Loading collections...</div>
+          ) : collectionsData.data.length > 0 ? (
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left border-collapse min-w-[1150px]">
+                <thead className="bg-slate-100 text-base font-bold text-slate-600 uppercase">
+                  <tr>
+                    <th className="p-3 text-center">Est Code</th>
+                    <th className="p-3 text-center">Establishment</th>
+                    <th className="p-3 text-center">Section</th>
+                    <th className="p-3 text-center">Officer</th>
+                    <th className="p-3 text-center">Period</th>
+                    <th className="p-3 text-center">Order Date</th>
+                    <th className="p-3 text-center">A/c 1</th>
+                    <th className="p-3 text-center">A/c 2</th>
+                    <th className="p-3 text-center">A/c 10</th>
+                    <th className="p-3 text-center">A/c 21</th>
+                    <th className="p-3 text-center">A/c 22</th>
+                    <th className="p-3 text-center">Total Collected</th>
+                    <th className="p-3 text-center">Payment Date</th>
+                    <th className="p-3 text-center">Cheque / DD No.</th>
+                    <th className="p-3 text-center">Mode</th>
+                  </tr>
+                </thead>
+                <tbody className="text-xs divide-y divide-slate-100">
+                  {collectionsData.data.map((col) => (
+                    <tr key={col.collection_id} className="hover:bg-teal-50/30">
+                      <td className="p-3 font-mono font-bold text-teal-700 whitespace-nowrap">{col.est_id}</td>
+                      <td className="p-3 font-semibold text-slate-800">{col.EST_NAME || 'N/A'}</td>
+                      <td className="p-3"><span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{col.inquiry_section || '7A'}</span></td>
+                      <td className="p-3 text-slate-600">{col.assessing_officer}</td>
+                      <td className="p-3 text-slate-500">{col.period_from} to {col.period_to}</td>
+                      <td className="p-3 font-semibold text-slate-700">{col.order_date}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account1)}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account2)}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account10)}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account21)}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account22)}</td>
+                      <td className="p-3 text-right font-mono font-bold text-teal-700">₹{fmtMoney(col.total_collected)}</td>
+                      <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{col.collection_date}</td>
+                      <td className="p-3 font-mono font-bold text-slate-700">{col.instrument_no || '—'}</td>
+                      <td className="p-3">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${col.mode === 'DD' ? 'bg-amber-100 text-amber-700' : 'bg-teal-100 text-teal-700'}`}>
+                          {col.mode || 'CHEQUE'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-xl text-slate-400">
+              No collection entries found. Record a payment from the Red Book.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* MAIN LAYOUT */}
+      {activeTab !== 'dashboard' && activeTab !== 'collections' && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT: MASTER SEARCH & TABLE */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <div className={`${activeTab === 'search' ? 'lg:col-span-2' : 'lg:col-span-3'} bg-white p-6 rounded-2xl shadow-sm border border-slate-200`}>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
               {activeTab === 'bluebook' && <FileText size={20} className="text-blue-600" />}
@@ -438,26 +933,36 @@ export default function App() {
           </div>
 
           {/* TABLE CONTAINER */}
-          {isLoading ? (
+          {activeTab === 'search' && !searchTerm.trim() ? (
+            <div className="text-center py-20 border-2 border-dashed border-slate-200 rounded-xl">
+              <Search size={36} className="text-slate-300 mx-auto mb-3" />
+              <p className="text-slate-400 font-medium">Type an establishment code, name, or PAN above to search.</p>
+            </div>
+          ) : isLoading ? (
             <div className="text-center py-16 text-slate-400 font-medium">Loading Data...</div>
           ) : searchResults.length > 0 ? (
             <>
               <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-[550px] overflow-y-auto">
-                <table className="w-full text-left border-collapse min-w-[800px]">
+                <table className={`w-full text-left border-collapse ${activeTab === 'redbook' ? 'min-w-[1800px]' : isCaseTab ? 'min-w-[1250px]' : 'min-w-[800px]'}`}>
                   {/* ---- CASE-BASED TABS: bluebook / active_7a / hearings_today ---- */}
                   {isCaseTab ? (
                     <>
-                      <thead className="sticky top-0 bg-slate-100 text-xs font-semibold text-slate-600 uppercase">
+                      <thead className="sticky top-0 bg-slate-100 text-base font-bold text-slate-600 uppercase">
                         <tr>
-                          <th className="p-3">Case No</th>
-                          <th className="p-3">Establishment</th>
-                          <th className="p-3">Section</th>
-                          <th className="p-3">Officer</th>
-                          <th className="p-3">Period</th>
+                          <th className="p-3 text-center">Case No</th>
+                          <th className="p-3 text-center">Establishment</th>
+                          <th className="p-3 text-center">Section</th>
+                          <th className="p-3 text-center">Officer</th>
+                          <th className="p-3 text-center">Period</th>
+                          <th className="p-3 text-center">Initiation Date</th>
                           <th className="p-3 text-center">Hearing No.</th>
-                          <th className="p-3">Next Date of Hearing</th>
-                          <th className="p-3">Status</th>
-                          <th className="p-3 text-right">Action</th>
+                          <th className="p-3 text-center">Next Date of Hearing</th>
+                          <th className="p-3 text-center">Status</th>
+                          <th className="p-3 text-center">Amount Received</th>
+                          <th className="p-3 text-center">8F Issued</th>
+                          <th className="p-3 text-center">NIR</th>
+                          <th className="p-3 text-center">Bank A/c Attached</th>
+                          <th className="p-3 text-center">Action</th>
                         </tr>
                       </thead>
                       <tbody className="text-xs divide-y divide-slate-100">
@@ -473,12 +978,49 @@ export default function App() {
                             </td>
                             <td className="p-3 text-slate-600">{c.assessing_officer}</td>
                             <td className="p-3 text-slate-500">{c.period_from} to {c.period_to}</td>
+                            <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{c.initiation_date || 'N/A'}</td>
                             <td className="p-3 text-center font-bold text-slate-700">{c.hearing_count || 1}</td>
                             <td className="p-3 font-semibold text-amber-600">{c.current_ndh || 'N/A'}</td>
                             <td className="p-3">
                               <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${c.status === 'CONCLUDED' ? 'bg-slate-200 text-slate-600' : 'bg-blue-100 text-blue-700'}`}>
                                 {c.status}
                               </span>
+                            </td>
+                            <td className="p-3 text-center">
+                              {(c.amount_received || 0) > 0 ? (
+                                <span className="font-mono font-bold text-emerald-700 whitespace-nowrap">₹{fmtMoney(c.amount_received)}</span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleF8(c); }}
+                                title={c.f8_issued ? "8F issued - click to revert" : "Click to mark 8F issued"}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 mx-auto transition ${c.f8_issued ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-emerald-500 hover:bg-emerald-600 text-white'}`}>
+                                <Stamp size={12} /> {c.f8_issued ? 'Issued' : 'Issue'}
+                              </button>
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleNir(c); }}
+                                title={(c.nir_status || 'IR') === 'NIR' ? `NIR - ${c.nir_cause || ''} (${c.nir_case_no || ''})` : "Click to mark NIR"}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 mx-auto transition ${(c.nir_status || 'IR') === 'NIR' ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-emerald-500 hover:bg-emerald-600 text-white'}`}>
+                                <Gavel size={12} /> {(c.nir_status || 'IR') === 'NIR' ? 'NIR' : 'IR'}
+                              </button>
+                              {(c.nir_status || 'IR') === 'NIR' && (
+                                <div className="text-[9px] text-slate-500 mt-0.5">
+                                  {c.nir_cause || ''}{c.nir_case_no ? ` · ${c.nir_case_no}` : ''}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleBankAttached(c); }}
+                                title={c.bank_ac_attached ? "Bank A/c attached - click to remove" : "Click to mark Bank A/c attached"}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 mx-auto transition ${c.bank_ac_attached ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-emerald-500 hover:bg-emerald-600 text-white'}`}>
+                                <Landmark size={12} /> {c.bank_ac_attached ? 'Attached' : 'Not Attached'}
+                              </button>
                             </td>
                             <td className="p-3 text-right">
                               <button
@@ -494,57 +1036,139 @@ export default function App() {
                   ) : activeTab === 'redbook' ? (
                     /* ---- RED BOOK TAB ---- */
                     <>
-                      <thead className="sticky top-0 bg-slate-100 text-xs font-semibold text-slate-600 uppercase">
+                      <thead className="sticky top-0 bg-slate-100 text-base font-bold text-slate-600 uppercase">
                         <tr>
-                          <th className="p-3">Case / Est</th>
-                          <th className="p-3">Section</th>
-                          <th className="p-3">Officer</th>
-                          <th className="p-3">Period</th>
-                          <th className="p-3">Order Date</th>
-                          <th className="p-3 text-right">A/c 1</th>
-                          <th className="p-3 text-right">A/c 2</th>
-                          <th className="p-3 text-right">A/c 10</th>
-                          <th className="p-3 text-right">A/c 21</th>
-                          <th className="p-3 text-right">A/c 22</th>
-                          <th className="p-3 text-right">Total Dues</th>
+                          <th className="p-3 text-center border-x border-slate-300 border-l-2 border-slate-500">Case / Est</th>
+                          <th className="p-3 text-center border-x border-slate-300">Section</th>
+                          <th className="p-3 text-center border-x border-slate-300">Officer</th>
+                          <th className="p-3 text-center border-x border-slate-300">Period</th>
+                          <th className="p-3 text-center border-x border-slate-300 border-r-2 border-slate-500">Order Date</th>
+                          <th className="p-3 text-center border-x border-slate-300 border-l-2 border-slate-500" colSpan={6}>Total Dues</th>
+                          <th className="p-3 text-center border-x border-slate-300 border-l-2 border-slate-500" colSpan={6}>Collected (A/c Wise)</th>
+                          <th className="p-3 text-center border-x border-slate-300 border-l-2 border-slate-500" colSpan={6}>Balance</th>
+                          <th className="p-3 text-center border-x border-slate-300 border-l-2 border-slate-500">Mode / Last Pay</th>
+                          <th className="p-3 text-center border-x border-slate-300 border-r-2 border-slate-500">Action</th>
+                        </tr>
+                        <tr className="bg-slate-50">
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500 border-l-2 border-slate-500"></th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500"></th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500"></th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500"></th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500 border-r-2 border-slate-500"></th>
+                          <th className="p-2 text-center border-x border-slate-300 border-l-2 border-slate-500 border-b-2 border-slate-500">A/c 1</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 2</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 10</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 21</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 22</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">Total</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-l-2 border-slate-500 border-b-2 border-slate-500">A/c 1</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 2</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 10</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 21</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 22</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">Total</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-l-2 border-slate-500 border-b-2 border-slate-500">A/c 1</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 2</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 10</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 21</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">A/c 22</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500">Total</th>
+                          <th className="p-2 text-center border-x border-slate-300 border-l-2 border-slate-500 border-b-2 border-slate-500"></th>
+                          <th className="p-2 text-center border-x border-slate-300 border-r-2 border-slate-500 border-b-2 border-slate-500"></th>
                         </tr>
                       </thead>
-                      <tbody className="text-xs divide-y divide-slate-100">
-                        {searchResults.map((r) => (
+                      <tbody className="text-xs divide-y divide-slate-300 border-b-2 border-slate-300">
+                        {searchResults.map((r) => {
+                          const b1 = (r.account1 || 0) - (r.collected1 || 0);
+                          const b2 = (r.account2 || 0) - (r.collected2 || 0);
+                          const b10 = (r.account10 || 0) - (r.collected10 || 0);
+                          const b21 = (r.account21 || 0) - (r.collected21 || 0);
+                          const b22 = (r.account22 || 0) - (r.collected22 || 0);
+                          const bTotal = (r.total_assessed || 0) - (r.total_collected || 0);
+                          return (
                           <tr key={r.case_no} className="hover:bg-rose-50/30">
-                            <td className="p-3">
+                            <td className="p-3 border-x border-slate-200 border-l-2 border-slate-500">
                               <span className="font-mono font-bold text-slate-800 block">{r.case_no}</span>
                               <span className="text-[10px] text-slate-500">{r.EST_NAME || 'N/A'}</span>
                               <span className="block text-[10px] font-mono text-slate-400">{r.est_id}</span>
                             </td>
-                            <td className="p-3">
+                            <td className="p-3 border-x border-slate-200">
                               <span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{r.inquiry_section || '7A'}</span>
                             </td>
-                            <td className="p-3 text-slate-600">{r.assessing_officer}</td>
-                            <td className="p-3 text-slate-500">{r.period_from} to {r.period_to}</td>
-                            <td className="p-3 font-semibold text-slate-700">{r.order_date}</td>
-                            <td className="p-3 text-right font-mono">₹{fmtMoney(r.account1)}</td>
-                            <td className="p-3 text-right font-mono">₹{fmtMoney(r.account2)}</td>
-                            <td className="p-3 text-right font-mono">₹{fmtMoney(r.account10)}</td>
-                            <td className="p-3 text-right font-mono">₹{fmtMoney(r.account21)}</td>
-                            <td className="p-3 text-right font-mono">₹{fmtMoney(r.account22)}</td>
-                            <td className="p-3 text-right font-mono font-bold text-rose-700 text-sm">₹{fmtMoney(r.total_assessed)}</td>
+                            <td className="p-3 text-slate-600 border-x border-slate-200">{r.assessing_officer}</td>
+                            <td className="p-3 text-slate-500 border-x border-slate-200">{r.period_from} to {r.period_to}</td>
+                            <td className="p-3 font-semibold text-slate-700 border-x border-slate-200 border-r-2 border-slate-500">{r.order_date}</td>
+                            <td className="p-3 text-right font-mono border-x border-slate-200">{r.account1 && `₹${fmtMoney(r.account1)}`}</td>
+                            <td className="p-3 text-right font-mono border-x border-slate-200">{r.account2 && `₹${fmtMoney(r.account2)}`}</td>
+                            <td className="p-3 text-right font-mono border-x border-slate-200">{r.account10 && `₹${fmtMoney(r.account10)}`}</td>
+                            <td className="p-3 text-right font-mono border-x border-slate-200">{r.account21 && `₹${fmtMoney(r.account21)}`}</td>
+                            <td className="p-3 text-right font-mono border-x border-slate-200">{r.account22 && `₹${fmtMoney(r.account22)}`}</td>
+                            <td className="p-3 text-right font-mono font-bold text-rose-700 border-x border-slate-200">{r.total_assessed && `₹${fmtMoney(r.total_assessed)}`}</td>
+                            <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-200">{r.collected1 && `₹${fmtMoney(r.collected1)}`}</td>
+                            <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-200">{r.collected2 && `₹${fmtMoney(r.collected2)}`}</td>
+                            <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-200">{r.collected10 && `₹${fmtMoney(r.collected10)}`}</td>
+                            <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-200">{r.collected21 && `₹${fmtMoney(r.collected21)}`}</td>
+                            <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-200">{r.collected22 && `₹${fmtMoney(r.collected22)}`}</td>
+                            <td className="p-3 text-right font-mono font-bold text-teal-700 border-x border-slate-200">{r.total_collected && `₹${fmtMoney(r.total_collected)}`}</td>
+                            <td className="p-3 text-right font-mono text-slate-600 border-x border-slate-200">{b1 ? `₹${fmtMoney(b1)}` : ''}</td>
+                            <td className="p-3 text-right font-mono text-slate-600 border-x border-slate-200">{b2 ? `₹${fmtMoney(b2)}` : ''}</td>
+                            <td className="p-3 text-right font-mono text-slate-600 border-x border-slate-200">{b10 ? `₹${fmtMoney(b10)}` : ''}</td>
+                            <td className="p-3 text-right font-mono text-slate-600 border-x border-slate-200">{b21 ? `₹${fmtMoney(b21)}` : ''}</td>
+                            <td className="p-3 text-right font-mono text-slate-600 border-x border-slate-200">{b22 ? `₹${fmtMoney(b22)}` : ''}</td>
+                            <td className="p-3 text-right font-mono font-bold text-slate-800 border-x border-slate-200">{bTotal ? `₹${fmtMoney(bTotal)}` : ''}</td>
+                            <td className="p-3 border-x border-slate-200 border-l-2 border-slate-500">
+                              <span className="text-[10px] text-slate-500 block">{r.last_mode || '—'} {r.last_instrument ? `· ${r.last_instrument}` : ''}</span>
+                              <span className="text-[10px] font-mono text-slate-400 block">{r.last_collection_date || 'No payment yet'}</span>
+                            </td>
+                            <td className="p-3 text-right border-x border-slate-200 border-r-2 border-slate-500">
+                              <button
+                                onClick={() => openCollectionModal(r)}
+                                className="bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 ml-auto">
+                                <IndianRupee size={13} /> Record
+                              </button>
+                            </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
+                      <tfoot className="sticky bottom-0 bg-slate-100 text-xs font-bold uppercase text-slate-800 border-t-2 border-slate-400">
+                        <tr className="bg-slate-200/80">
+                          <td className="p-3 font-black text-slate-800 text-sm border-x border-slate-300 border-l-2 border-slate-500" colSpan={5}>GRAND TOTAL</td>
+                          <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.account1 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.account2 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.account10 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.account21 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.account22 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.total_assessed || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.collected1 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.collected2 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.collected10 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.collected21 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-emerald-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.collected22 || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-teal-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.total_collected || 0), 0))}</td>
+                          <td className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r.account1 || 0) - (r.collected1 || 0)), 0))}</td>
+                          <td className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r.account2 || 0) - (r.collected2 || 0)), 0))}</td>
+                          <td className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r.account10 || 0) - (r.collected10 || 0)), 0))}</td>
+                          <td className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r.account21 || 0) - (r.collected21 || 0)), 0))}</td>
+                          <td className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r.account22 || 0) - (r.collected22 || 0)), 0))}</td>
+                          <td className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r.total_assessed || 0) - (r.total_collected || 0)), 0))}</td>
+                          <td className="p-3 border-x border-slate-300 border-l-2 border-slate-500"></td>
+                          <td className="p-3 border-x border-slate-300 border-r-2 border-slate-500"></td>
+                        </tr>
+                      </tfoot>
                     </>
                   ) : (
                     /* ---- SEARCH TAB (ESTABLISHMENT MASTER) ---- */
                     <>
-                      <thead className="sticky top-0 bg-slate-100 text-xs font-semibold text-slate-600 uppercase">
+                      <thead className="sticky top-0 bg-slate-100 text-base font-bold text-slate-600 uppercase">
                         <tr>
-                          <th className="p-3">Est Code</th>
-                          <th className="p-3">Establishment Name</th>
-                          <th className="p-3">Address 1 & 2</th>
-                          <th className="p-3">City</th>
+                          <th className="p-3 text-center">Est Code</th>
+                          <th className="p-3 text-center">Establishment Name</th>
+                          <th className="p-3 text-center">Address 1 & 2</th>
+                          <th className="p-3 text-center">City</th>
                           <th className="p-3 text-center">No of UAN</th>
-                          <th className="p-3">Email ID</th>
-                          <th className="p-3 text-right">Action</th>
+                          <th className="p-3 text-center">Email ID</th>
+                          <th className="p-3 text-center">Action</th>
                         </tr>
                       </thead>
                       <tbody className="text-xs divide-y divide-slate-100">
@@ -604,6 +1228,7 @@ export default function App() {
         </div>
 
         {/* RIGHT: ESTABLISHMENT PROFILE (only relevant on search tab) */}
+        {activeTab === 'search' && (
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-fit">
           <h3 className="text-base font-bold text-slate-800 mb-4 pb-2 border-b flex items-center gap-2">
             <Building size={18} className="text-blue-600" /> Establishment Profile
@@ -660,7 +1285,9 @@ export default function App() {
             <p className="text-slate-400 text-center py-12 text-sm">Click on any establishment to select and view details.</p>
           )}
         </div>
+        )}
       </div>
+      )}
 
       {/* MODAL 1: INQUIRY OFFICERS MANAGEMENT */}
       {showOfficerModal && (
@@ -880,12 +1507,12 @@ export default function App() {
             ) : (
               <div className="border border-slate-200 rounded-xl overflow-hidden mb-4">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-600 font-semibold uppercase">
+                  <thead className="bg-slate-100 text-base font-bold text-slate-600 uppercase">
                     <tr>
-                      <th className="p-2.5">#</th>
-                      <th className="p-2.5">Hearing Date</th>
-                      <th className="p-2.5">Proceedings</th>
-                      <th className="p-2.5">Next Hearing</th>
+                      <th className="p-2.5 text-center">#</th>
+                      <th className="p-2.5 text-center">Hearing Date</th>
+                      <th className="p-2.5 text-center">Proceedings</th>
+                      <th className="p-2.5 text-center">Next Hearing</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1062,6 +1689,309 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* MODAL 6: RECORD COLLECTION (PAYMENT RECEIVED) */}
+      {showCollectionModal && collectionCase && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-2xl max-w-[672px] w-full p-6 shadow-2xl border border-slate-100 relative max-h-[92vh] overflow-y-auto">
+            <button
+              onClick={() => setShowCollectionModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+              <X size={20} />
+            </button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-teal-100 text-teal-600 p-2.5 rounded-xl">
+                <IndianRupee size={22} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Record Payment Received</h3>
+                <p className="text-xs text-slate-500 font-mono">{collectionCase.case_no} · {collectionCase.EST_NAME || ''}</p>
+              </div>
+            </div>
+
+            {(() => {
+              const bal = (collectionCase.total_assessed || 0) - (collectionCase.total_collected || 0);
+              return (
+                <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl flex justify-between items-center mb-4 text-xs">
+                  <span className="text-slate-600 font-bold uppercase">Outstanding Balance Before This Payment</span>
+                  <span className="text-teal-700 font-black text-xl">₹{fmtMoney(bal)}</span>
+                </div>
+              );
+            })()}
+
+            <form onSubmit={submitCollection} className="space-y-4 text-xs font-semibold">
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-600 mb-1">Payment Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={collectionForm.collection_date}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, collection_date: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none font-medium text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1">Mode of Payment</label>
+                  <select
+                    value={collectionForm.mode}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, mode: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none font-bold bg-white text-sm">
+                    <option value="CHEQUE">Cheque</option>
+                    <option value="DD">Demand Draft (DD)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1">Cheque / DD No. (Unique)</label>
+                  <input
+                    type="text"
+                    required
+                    value={collectionForm.instrument_no}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, instrument_no: e.target.value })}
+                    placeholder="e.g. 000123"
+                    className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none font-bold text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* ACCOUNT-WISE TABLE: Assessed / This Payment / Balance */}
+              {(() => {
+                const col = collectionCase;
+                const dues = [
+                  col.account1 || 0, col.account2 || 0, col.account10 || 0,
+                  col.account21 || 0, col.account22 || 0, col.total_assessed || 0
+                ];
+                const alreadyCollected = [
+                  col.collected1 || 0, col.collected2 || 0, col.collected10 || 0,
+                  col.collected21 || 0, col.collected22 || 0, col.total_collected || 0
+                ];
+                const thisPay = [
+                  parseFloat(collectionForm.account1) || 0,
+                  parseFloat(collectionForm.account2) || 0,
+                  parseFloat(collectionForm.account10) || 0,
+                  parseFloat(collectionForm.account21) || 0,
+                  parseFloat(collectionForm.account22) || 0,
+                  ACCOUNT_HEADS.reduce((s, h) => s + (parseFloat(collectionForm[h.key]) || 0), 0)
+                ];
+                const balance = dues.map((d, i) => d - alreadyCollected[i] - thisPay[i]);
+                return (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-600 uppercase text-[10px]">
+                          <th className="p-2">A/c Head</th>
+                          <th className="p-2 text-right">Assessed Dues</th>
+                          <th className="p-2 text-right">Collected Earlier</th>
+                          <th className="p-2 text-right">This Payment</th>
+                          <th className="p-2 text-right">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {ACCOUNT_HEADS.map((h, i) => (
+                          <tr key={h.key}>
+                            <td className="p-2 font-bold text-slate-700">{h.label}</td>
+                            <td className="p-2 text-right font-mono text-slate-600">₹{fmtMoney(dues[i])}</td>
+                            <td className="p-2 text-right font-mono text-emerald-700">₹{fmtMoney(alreadyCollected[i])}</td>
+                            <td className="p-2 text-right">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={collectionForm[h.key]}
+                                onChange={(e) => setCollectionForm({ ...collectionForm, [h.key]: e.target.value })}
+                                className="w-full max-w-[120px] p-1.5 border border-teal-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none font-medium text-right text-sm"
+                              />
+                            </td>
+                            <td className="p-2 text-right font-mono font-bold text-slate-800">₹{fmtMoney(balance[i])}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-teal-50/60 font-bold text-sm">
+                          <td className="p-2 text-slate-700">Total</td>
+                          <td className="p-2 text-right font-mono text-slate-700">₹{fmtMoney(dues[5])}</td>
+                          <td className="p-2 text-right font-mono text-emerald-700">₹{fmtMoney(alreadyCollected[5])}</td>
+                          <td className="p-2 text-right font-mono text-teal-700">₹{fmtMoney(thisPay[5])}</td>
+                          <td className="p-2 text-right font-mono text-slate-800">₹{fmtMoney(balance[5])}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+
+              <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl flex justify-between items-center">
+                <span className="text-slate-600 font-bold uppercase">Total Collected This Payment</span>
+                <span className="text-teal-700 font-black text-xl">
+                  ₹{fmtMoney(ACCOUNT_HEADS.reduce((s, h) => s + (parseFloat(collectionForm[h.key]) || 0), 0))}
+                </span>
+              </div>
+
+              <div className="pt-1 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCollectionModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold text-sm">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingCollection}
+                  className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold shadow-sm disabled:opacity-50 text-sm">
+                  {isSubmittingCollection ? 'Recording...' : 'Record Payment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 7: NIR CAUSE RECORDING */}
+      {showNirModal && nirModalCase && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[70]">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 relative">
+            <button
+              onClick={() => setShowNirModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+              <X size={20} />
+            </button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-rose-100 text-rose-600 p-2.5 rounded-xl">
+                <AlertTriangle size={22} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Mark Case as NIR</h3>
+                <p className="text-xs text-slate-500 font-mono">{nirModalCase.case_no} · {nirModalCase.EST_NAME || ''}</p>
+              </div>
+            </div>
+
+            <form onSubmit={submitNir} className="space-y-4 text-sm font-semibold">
+              <div>
+                <label className="block text-slate-600 mb-1">Cause of NIR</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {['High Court', 'CGIT'].map((cause) => (
+                    <button
+                      key={cause}
+                      type="button"
+                      onClick={() => setNirForm({ ...nirForm, nir_cause: cause })}
+                      className={`p-3 border rounded-xl font-bold transition ${
+                        nirForm.nir_cause === cause
+                          ? 'bg-rose-600 border-rose-600 text-white'
+                          : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                      }`}>
+                      {cause}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-600 mb-1">Case No.</label>
+                  <input
+                    type="text"
+                    required
+                    value={nirForm.nir_case_no}
+                    onChange={(e) => setNirForm({ ...nirForm, nir_case_no: e.target.value })}
+                    placeholder="e.g. WP(C) 1234/2026"
+                    className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none font-medium text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1">Case Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={nirForm.nir_case_date}
+                    onChange={(e) => setNirForm({ ...nirForm, nir_case_date: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none font-medium text-sm"
+                  />
+                </div>
+              </div>
+              <div className="pt-1 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowNirModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold text-sm">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingNir}
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold shadow-sm disabled:opacity-50 text-sm">
+                  {isSavingNir ? 'Saving...' : 'Confirm NIR'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      </div>
+      )}
+    </>
+  );
+}
+
+/* ---- LOGIN PAGE ---- */
+function LoginPage({ loginForm, setLoginForm, loginError, isLoggingIn, handleLogin }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-700 flex items-center justify-center p-6 font-sans">
+      <div className="w-full max-w-md">
+        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-blue-700 px-8 py-6 text-center">
+            <div className="inline-flex bg-white/20 text-white p-3 rounded-2xl mb-3">
+              <Shield size={32} />
+            </div>
+            <h2 className="text-2xl font-bold text-white">Inquiry & Recovery Portal</h2>
+            <p className="text-blue-100 text-sm mt-1 font-medium">EPFO, District Office, Cuttack</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="p-8 space-y-5">
+            <div>
+              <label className="block text-slate-700 font-bold text-sm mb-1.5">Username</label>
+              <div className="relative">
+                <UserCheck size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={loginForm.username}
+                  onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                  placeholder="Enter username"
+                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium text-slate-800"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-slate-700 font-bold text-sm mb-1.5">Password</label>
+              <div className="relative">
+                <ShieldAlert size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="password"
+                  required
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                  placeholder="Enter password"
+                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium text-slate-800"
+                />
+              </div>
+            </div>
+
+            {loginError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-600 px-4 py-3 rounded-xl text-sm font-semibold">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-md transition disabled:opacity-50 text-base flex items-center justify-center gap-2">
+              {isLoggingIn ? 'Signing in...' : 'Sign In'}
+            </button>
+          </form>
+        </div>
+        <p className="text-center text-blue-100 text-xs mt-5 font-medium">
+          Authorized personnel only. Unauthorized access is prohibited.
+        </p>
+      </div>
     </div>
   );
 }

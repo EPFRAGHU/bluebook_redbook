@@ -1,6 +1,7 @@
 import sqlite3
 import uuid
 import os
+import calendar
 from datetime import date
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
@@ -60,7 +61,13 @@ def startup_event():
             current_ndh TEXT,
             hearing_count INTEGER DEFAULT 1,
             status TEXT DEFAULT 'ACTIVE',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            f8_issued INTEGER DEFAULT 0,
+            nir_status TEXT DEFAULT 'IR',
+            nir_cause TEXT,
+            nir_case_no TEXT,
+            nir_case_date TEXT,
+            bank_ac_attached INTEGER DEFAULT 0
         )
     """)
     ensure_column(cursor, "cases_7a", "inquiry_section", "TEXT DEFAULT '7A'")
@@ -68,6 +75,12 @@ def startup_event():
     ensure_column(cursor, "cases_7a", "hearing_count", "INTEGER DEFAULT 1")
     ensure_column(cursor, "cases_7a", "status", "TEXT DEFAULT 'ACTIVE'")
     ensure_column(cursor, "cases_7a", "created_at", "TIMESTAMP")
+    ensure_column(cursor, "cases_7a", "f8_issued", "INTEGER DEFAULT 0")
+    ensure_column(cursor, "cases_7a", "nir_status", "TEXT DEFAULT 'IR'")
+    ensure_column(cursor, "cases_7a", "nir_cause", "TEXT")
+    ensure_column(cursor, "cases_7a", "nir_case_no", "TEXT")
+    ensure_column(cursor, "cases_7a", "nir_case_date", "TEXT")
+    ensure_column(cursor, "cases_7a", "bank_ac_attached", "INTEGER DEFAULT 0")
 
     # ---- hearing_log : sequential line-by-line hearing history per case ----
     cursor.execute("""
@@ -126,6 +139,26 @@ def startup_event():
     ensure_column(cursor, "redbook", "account22", "REAL DEFAULT 0")
     ensure_column(cursor, "redbook", "total_assessed", "REAL DEFAULT 0")
 
+    # ---- collections : payment received register (cheque / DD) against redbook cases ----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS collections (
+            collection_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_no TEXT,
+            est_id TEXT,
+            collection_date TEXT,
+            mode TEXT,
+            instrument_no TEXT,
+            account1 REAL DEFAULT 0,
+            account2 REAL DEFAULT 0,
+            account10 REAL DEFAULT 0,
+            account21 REAL DEFAULT 0,
+            account22 REAL DEFAULT 0,
+            total_collected REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    ensure_column(cursor, "collections", "instrument_no", "TEXT")
+
     conn.commit()
     conn.close()
 
@@ -154,6 +187,27 @@ class FinalizeRequest(BaseModel):
     account10: float = 0
     account21: float = 0
     account22: float = 0
+
+
+class CollectionRequest(BaseModel):
+    case_no: str
+    collection_date: str
+    mode: str = "CHEQUE"
+    instrument_no: str = ""
+    account1: float = 0
+    account2: float = 0
+    account10: float = 0
+    account21: float = 0
+    account22: float = 0
+
+
+class CaseTrackingRequest(BaseModel):
+    f8_issued: Optional[bool] = None
+    nir_status: Optional[str] = None
+    nir_cause: Optional[str] = None
+    nir_case_no: Optional[str] = None
+    nir_case_date: Optional[str] = None
+    bank_ac_attached: Optional[bool] = None
 
 
 def est_columns_select(prefix="e"):
@@ -230,9 +284,18 @@ def fetch_cases(status_filter=None, ndh_today=False, q="", page=1, limit=10):
             SELECT
                 c.case_no, c.est_id, c.inquiry_section, c.assessing_officer,
                 c.period_from, c.period_to, c.current_ndh, c.hearing_count, c.status,
+                c.f8_issued, c.nir_status, c.nir_cause, c.nir_case_no, c.nir_case_date,
+                c.bank_ac_attached,
+                substr(c.created_at, 1, 10) AS initiation_date,
+                COALESCE(col.amount_received, 0) AS amount_received,
                 {est_columns_select("e")}
             FROM cases_7a c
             LEFT JOIN establishments e ON c.est_id = e.est_id
+            LEFT JOIN (
+                SELECT case_no, SUM(total_collected) AS amount_received
+                FROM collections
+                GROUP BY case_no
+            ) col ON col.case_no = c.case_no
             WHERE {where_sql}
             ORDER BY c.created_at DESC
             LIMIT ? OFFSET ?
@@ -291,6 +354,41 @@ def get_case_hearings(case_no: str = Query(..., description="Case number (URL-en
     return {"data": data}
 
 
+@app.post("/api/cases/{case_no}/tracking")
+def update_case_tracking(case_no: str, payload: CaseTrackingRequest):
+    """Update operational tracking flags for a case (8F Issued / NIR / Bank A/c Attached)."""
+    updates = {}
+    if payload.f8_issued is not None:
+        updates["f8_issued"] = 1 if payload.f8_issued else 0
+    if payload.nir_status is not None:
+        updates["nir_status"] = payload.nir_status
+    if payload.nir_cause is not None:
+        updates["nir_cause"] = payload.nir_cause
+    if payload.nir_case_no is not None:
+        updates["nir_case_no"] = payload.nir_case_no
+    if payload.nir_case_date is not None:
+        updates["nir_case_date"] = payload.nir_case_date
+    if payload.bank_ac_attached is not None:
+        updates["bank_ac_attached"] = 1 if payload.bank_ac_attached else 0
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No tracking fields provided")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT case_no FROM cases_7a WHERE case_no = ?", (case_no,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    set_clause = ", ".join(f"{col} = ?" for col in updates)
+    params = list(updates.values()) + [case_no]
+    cursor.execute(f"UPDATE cases_7a SET {set_clause} WHERE case_no = ?", params)
+    conn.commit()
+    conn.close()
+    return {"success": True, "case_no": case_no, **updates}
+
+
 @app.get("/api/redbook")
 def get_redbook(q: str = "", page: int = 1, limit: int = 10):
     conn = get_db_connection()
@@ -303,11 +401,37 @@ def get_redbook(q: str = "", page: int = 1, limit: int = 10):
             SELECT
                 r.case_no, r.est_id, r.order_date,
                 r.account1, r.account2, r.account10, r.account21, r.account22, r.total_assessed,
-                c.inquiry_section, c.assessing_officer, c.period_from, c.period_to,
+                COALESCE(c.sum1, 0) AS collected1,
+                COALESCE(c.sum2, 0) AS collected2,
+                COALESCE(c.sum10, 0) AS collected10,
+                COALESCE(c.sum21, 0) AS collected21,
+                COALESCE(c.sum22, 0) AS collected22,
+                COALESCE(c.sum_total, 0) AS total_collected,
+                COALESCE(c.collection_count, 0) AS collection_count,
+                c.last_collection_date AS last_collection_date,
+                c.last_mode AS last_mode,
+                c.last_instrument AS last_instrument,
+                c7.inquiry_section, c7.assessing_officer, c7.period_from, c7.period_to,
                 {est_columns_select("e")}
             FROM redbook r
             LEFT JOIN establishments e ON r.est_id = e.est_id
-            LEFT JOIN cases_7a c ON r.case_no = c.case_no
+            LEFT JOIN cases_7a c7 ON r.case_no = c7.case_no
+            LEFT JOIN (
+                SELECT
+                    case_no,
+                    SUM(account1) AS sum1,
+                    SUM(account2) AS sum2,
+                    SUM(account10) AS sum10,
+                    SUM(account21) AS sum21,
+                    SUM(account22) AS sum22,
+                    SUM(total_collected) AS sum_total,
+                    COUNT(*) AS collection_count,
+                    MAX(collection_date) AS last_collection_date,
+                    (SELECT mode FROM collections c2 WHERE c2.case_no = collections.case_no ORDER BY collection_date DESC, collection_id DESC LIMIT 1) AS last_mode,
+                    (SELECT instrument_no FROM collections c3 WHERE c3.case_no = collections.case_no ORDER BY collection_date DESC, collection_id DESC LIMIT 1) AS last_instrument
+                FROM collections
+                GROUP BY case_no
+            ) c ON r.case_no = c.case_no
             WHERE (e.est_name LIKE ? OR e.est_id LIKE ? OR r.case_no LIKE ?)
             ORDER BY r.order_date DESC
             LIMIT ? OFFSET ?
@@ -330,6 +454,162 @@ def get_redbook(q: str = "", page: int = 1, limit: int = 10):
 
     conn.close()
     return {"data": data, "total": total}
+
+
+@app.get("/api/collections")
+def get_collections(q: str = "", month: str = "", page: int = 1, limit: int = 100):
+    """Month-wise collection register. Each row = one payment received (cheque/DD) per establishment."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    offset = (page - 1) * limit
+    search_pattern = f"%{q.strip()}%" if q.strip() else "%"
+
+    where = []
+    params = []
+    if q.strip():
+        where.append("(e.est_name LIKE ? OR e.est_id LIKE ? OR r.case_no LIKE ?)")
+        params += [search_pattern, search_pattern, search_pattern]
+    if month:
+        where.append("substr(col.collection_date, 1, 7) = ?")
+        params.append(month)
+
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
+    try:
+        query = f"""
+            SELECT
+                col.collection_id, col.case_no, col.est_id, col.collection_date, col.mode, col.instrument_no,
+                col.account1, col.account2, col.account10, col.account21, col.account22, col.total_collected,
+                r.order_date,
+                c7.inquiry_section, c7.assessing_officer, c7.period_from, c7.period_to,
+                {est_columns_select("e")}
+            FROM collections col
+            LEFT JOIN redbook r ON col.case_no = r.case_no
+            LEFT JOIN cases_7a c7 ON col.case_no = c7.case_no
+            LEFT JOIN establishments e ON col.est_id = e.est_id
+            {where_sql}
+            ORDER BY col.collection_date DESC, col.collection_id DESC
+            LIMIT ? OFFSET ?
+        """
+        cursor.execute(query, (*params, limit, offset))
+        data = [dict(row) for row in cursor.fetchall()]
+
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM collections col
+            LEFT JOIN redbook r ON col.case_no = r.case_no
+            LEFT JOIN establishments e ON col.est_id = e.est_id
+            {where_sql}
+        """
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()["total"]
+    except Exception as e:
+        print("Collections fetch error:", e)
+        data = []
+        total = 0
+
+    conn.close()
+    return {"data": data, "total": total}
+
+
+@app.get("/api/collections/monthly")
+def get_collections_monthly(year: Optional[int] = None):
+    """Account-wise monthly collection summary for a financial year (April to March)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    today = date.today()
+    fy = year if year else (today.year if today.month >= 4 else today.year - 1)
+
+    try:
+        cursor.execute("SELECT SUM(total_collected) FROM collections")
+        total = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT COUNT(*) FROM collections")
+        count = cursor.fetchone()[0]
+    except Exception as e:
+        print("Collections monthly error:", e)
+        total, count = 0, 0
+
+    months = []
+    for i in range(12):
+        if i < 9:
+            m = i + 4
+            y = fy
+        else:
+            m = i - 8
+            y = fy + 1
+        ym = f"{y:04d}-{m:02d}"
+        try:
+            cursor.execute("""
+                SELECT
+                    COALESCE(SUM(account1),0) AS a1, COALESCE(SUM(account2),0) AS a2,
+                    COALESCE(SUM(account10),0) AS a10, COALESCE(SUM(account21),0) AS a21,
+                    COALESCE(SUM(account22),0) AS a22, COALESCE(SUM(total_collected),0) AS total,
+                    COUNT(*) AS count
+                FROM collections WHERE substr(collection_date,1,7) = ?
+            """, (ym,))
+            row = cursor.fetchone()
+            months.append({
+                "month": f"{calendar.month_abbr[m]} {y}",
+                "ym": ym,
+                "account1": row["a1"], "account2": row["a2"], "account10": row["a10"],
+                "account21": row["a21"], "account22": row["a22"],
+                "total": row["total"], "count": row["count"],
+            })
+        except Exception as e:
+            print("Collections monthly error:", e)
+            months.append({"month": ym, "account1": 0, "account2": 0, "account10": 0,
+                           "account21": 0, "account22": 0, "total": 0, "count": 0})
+
+    conn.close()
+    return {"fy": f"{fy}-{str(fy + 1)[-2:]}", "months": months, "grand_total": total, "grand_count": count}
+
+
+@app.post("/api/collections")
+def add_collection(req: CollectionRequest):
+    """Record a payment received (cheque/DD) against a redbook case.
+    Multiple payments allowed for the same establishment/period, but each
+    cheque/DD instrument number must be unique."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT est_id FROM redbook WHERE case_no = ?", (req.case_no,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Case not found in Red Book")
+
+        instrument_no = (req.instrument_no or "").strip().upper()
+        if not instrument_no:
+            raise HTTPException(status_code=400, detail="Cheque/DD number is required")
+
+        cursor.execute(
+            "SELECT collection_id FROM collections WHERE case_no = ? AND instrument_no = ?",
+            (req.case_no, instrument_no)
+        )
+        if cursor.fetchone():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cheque/DD number {instrument_no} already recorded for this case"
+            )
+
+        total = req.account1 + req.account2 + req.account10 + req.account21 + req.account22
+        cursor.execute("""
+            INSERT INTO collections
+                (case_no, est_id, collection_date, mode, instrument_no,
+                 account1, account2, account10, account21, account22, total_collected)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            req.case_no, row["est_id"], req.collection_date, req.mode.upper(), instrument_no,
+            req.account1, req.account2, req.account10, req.account21, req.account22, total
+        ))
+        conn.commit()
+        return {"success": True, "collection_id": cursor.lastrowid, "total_collected": total}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 @app.get("/api/dashboard/stats")
@@ -364,6 +644,59 @@ def get_dashboard_stats():
         "hearings_today": hearings_today,
         "total_amount_assessed": total_amount_assessed,
         "redbook_defaulters": redbook_defaulters
+    }
+
+
+@app.get("/api/dashboard/monthly")
+def get_monthly_dashboard(year: Optional[int] = None):
+    """Monthly running balance of inquiries for a financial year (April to March).
+    Opening = carried forward balance, Added = cases initiated in the month,
+    Disposed = cases finalised (entered in Red Book) in the month,
+    Closing = opening + added - disposed."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    today = date.today()
+    fy = year if year else (today.year if today.month >= 4 else today.year - 1)
+
+    try:
+        cursor.execute("SELECT substr(created_at, 1, 10) AS d FROM cases_7a")
+        created_dates = [row["d"] for row in cursor.fetchall() if row["d"]]
+        cursor.execute("SELECT order_date AS d FROM redbook")
+        disposed_dates = [row["d"] for row in cursor.fetchall() if row["d"]]
+    except Exception as e:
+        print("Monthly dashboard error:", e)
+        created_dates, disposed_dates = [], []
+    finally:
+        conn.close()
+
+    months = []
+    opening = 0
+    for i in range(12):
+        if i < 9:
+            m = i + 4
+            y = fy
+        else:
+            m = i - 8
+            y = fy + 1
+        first = f"{y:04d}-{m:02d}-01"
+        last = f"{y:04d}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
+        if i == 0:
+            opening = sum(1 for d in created_dates if d < first) - sum(1 for d in disposed_dates if d < first)
+        added = sum(1 for d in created_dates if first <= d <= last)
+        disposed = sum(1 for d in disposed_dates if first <= d <= last)
+        closing = opening + added - disposed
+        months.append({
+            "month": f"{calendar.month_abbr[m]} {y}",
+            "opening": opening,
+            "added": added,
+            "disposed": disposed,
+            "closing": closing,
+        })
+        opening = closing
+
+    return {
+        "fy": f"{fy}-{str(fy + 1)[-2:]}",
+        "months": months,
     }
 
 
