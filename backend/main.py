@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 import calendar
 from datetime import date
@@ -8,6 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+# Make the backend directory importable regardless of the working directory
+# (gunicorn loads this as backend.main, but db.py sits next to this file).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import db
 

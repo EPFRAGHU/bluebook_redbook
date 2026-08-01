@@ -9,8 +9,11 @@ Internal/External connection string as DATABASE_URL).
 
 import os
 import sqlite3
+import sys
 
 from psycopg2.extras import execute_values
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import db
 
