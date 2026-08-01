@@ -111,6 +111,35 @@ class CaseTrackingRequest(BaseModel):
     bank_ac_attached: Optional[bool] = None
 
 
+class CaseEditRequest(BaseModel):
+    inquiry_section: Optional[str] = None
+    assessing_officer: Optional[str] = None
+    period_from: Optional[str] = None
+    period_to: Optional[str] = None
+    current_ndh: Optional[str] = None
+    status: Optional[str] = None
+
+
+class RedBookEditRequest(BaseModel):
+    order_date: Optional[str] = None
+    account1: Optional[float] = None
+    account2: Optional[float] = None
+    account10: Optional[float] = None
+    account21: Optional[float] = None
+    account22: Optional[float] = None
+
+
+class CollectionEditRequest(BaseModel):
+    collection_date: Optional[str] = None
+    mode: Optional[str] = None
+    instrument_no: Optional[str] = None
+    account1: Optional[float] = None
+    account2: Optional[float] = None
+    account10: Optional[float] = None
+    account21: Optional[float] = None
+    account22: Optional[float] = None
+
+
 def est_columns_select(prefix="e"):
     """Standard aliasing of establishment columns to the names the frontend expects."""
     return f"""
@@ -288,6 +317,182 @@ def update_case_tracking(case_no: str, payload: CaseTrackingRequest):
     conn.commit()
     conn.close()
     return {"success": True, "case_no": case_no, **updates}
+
+
+@app.put("/api/cases/{case_no}")
+def update_case(case_no: str, payload: CaseEditRequest):
+    """Edit the basic details of a case (Blue Book / Active Inquiries)."""
+    updates = {}
+    if payload.inquiry_section is not None:
+        updates["inquiry_section"] = payload.inquiry_section
+    if payload.assessing_officer is not None:
+        updates["assessing_officer"] = payload.assessing_officer
+    if payload.period_from is not None:
+        updates["period_from"] = payload.period_from
+    if payload.period_to is not None:
+        updates["period_to"] = payload.period_to
+    if payload.current_ndh is not None:
+        updates["current_ndh"] = payload.current_ndh or None
+    if payload.status is not None:
+        updates["status"] = payload.status
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No case fields provided")
+
+    conn = get_db_connection()
+    cursor = db.execute(conn, "SELECT case_no FROM cases_7a WHERE case_no = ?", (case_no,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    set_clause = ", ".join(f"{col} = ?" for col in updates)
+    params = list(updates.values()) + [case_no]
+    db.execute(conn, f"UPDATE cases_7a SET {set_clause} WHERE case_no = ?", params)
+    conn.commit()
+    conn.close()
+    return {"success": True, "case_no": case_no, **updates}
+
+
+@app.delete("/api/cases/{case_no}")
+def delete_case(case_no: str):
+    """Delete a case and its associated hearing log, Red Book entry and collections."""
+    conn = get_db_connection()
+    cursor = db.execute(conn, "SELECT case_no FROM cases_7a WHERE case_no = ?", (case_no,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    for table in ["hearing_log", "redbook", "collections"]:
+        db.execute(conn, f"DELETE FROM {table} WHERE case_no = ?", (case_no,))
+    db.execute(conn, "DELETE FROM cases_7a WHERE case_no = ?", (case_no,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "case_no": case_no}
+
+
+@app.put("/api/redbook/{case_no}")
+def update_redbook(case_no: str, payload: RedBookEditRequest):
+    """Edit a Red Book entry's order date and account-wise dues."""
+    updates = {}
+    if payload.order_date is not None:
+        updates["order_date"] = payload.order_date
+    for key in ["account1", "account2", "account10", "account21", "account22"]:
+        val = getattr(payload, key)
+        if val is not None:
+            updates[key] = val
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No Red Book fields provided")
+
+    conn = get_db_connection()
+    cursor = db.execute(conn, "SELECT account1, account2, account10, account21, account22, total_assessed FROM redbook WHERE case_no = ?", (case_no,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Red Book entry not found")
+
+    account_keys = ["account1", "account2", "account10", "account21", "account22"]
+    if any(k in updates for k in account_keys):
+        a1 = updates.get("account1", row["account1"] or 0)
+        a2 = updates.get("account2", row["account2"] or 0)
+        a10 = updates.get("account10", row["account10"] or 0)
+        a21 = updates.get("account21", row["account21"] or 0)
+        a22 = updates.get("account22", row["account22"] or 0)
+        updates["total_assessed"] = a1 + a2 + a10 + a21 + a22
+
+    set_clause = ", ".join(f"{col} = ?" for col in updates)
+    params = list(updates.values()) + [case_no]
+    db.execute(conn, f"UPDATE redbook SET {set_clause} WHERE case_no = ?", params)
+    conn.commit()
+    conn.close()
+    return {"success": True, "case_no": case_no, **updates}
+
+
+@app.delete("/api/redbook/{case_no}")
+def delete_redbook(case_no: str):
+    """Remove a Red Book entry (and its collection payments)."""
+    conn = get_db_connection()
+    cursor = db.execute(conn, "SELECT case_no FROM redbook WHERE case_no = ?", (case_no,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Red Book entry not found")
+
+    db.execute(conn, "DELETE FROM collections WHERE case_no = ?", (case_no,))
+    db.execute(conn, "DELETE FROM redbook WHERE case_no = ?", (case_no,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "case_no": case_no}
+
+
+@app.put("/api/collections/{collection_id}")
+def update_collection(collection_id: int, payload: CollectionEditRequest):
+    """Edit a collection entry (payment received)."""
+    updates = {}
+    if payload.collection_date is not None:
+        updates["collection_date"] = payload.collection_date
+    if payload.mode is not None:
+        updates["mode"] = payload.mode.upper()
+    if payload.instrument_no is not None:
+        updates["instrument_no"] = (payload.instrument_no or "").strip().upper()
+    for key in ["account1", "account2", "account10", "account21", "account22"]:
+        val = getattr(payload, key)
+        if val is not None:
+            updates[key] = val
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No collection fields provided")
+
+    conn = get_db_connection()
+    cursor = db.execute(conn, "SELECT collection_id, case_no FROM collections WHERE collection_id = ?", (collection_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Collection entry not found")
+
+    # Enforce per-case Cheque/DD number uniqueness (excluding this entry itself).
+    if "instrument_no" in updates and updates["instrument_no"]:
+        cursor = db.execute(conn, """
+            SELECT collection_id FROM collections
+            WHERE case_no = ? AND instrument_no = ? AND collection_id != ?
+        """, (row["case_no"], updates["instrument_no"], collection_id))
+        if cursor.fetchone():
+            conn.close()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cheque/DD number {updates['instrument_no']} already recorded for this case"
+            )
+
+    # Recompute the running total for the entry.
+    cursor = db.execute(conn, "SELECT account1, account2, account10, account21, account22 FROM collections WHERE collection_id = ?", (collection_id,))
+    cur = cursor.fetchone()
+    account1 = updates.get("account1", cur["account1"] or 0)
+    account2 = updates.get("account2", cur["account2"] or 0)
+    account10 = updates.get("account10", cur["account10"] or 0)
+    account21 = updates.get("account21", cur["account21"] or 0)
+    account22 = updates.get("account22", cur["account22"] or 0)
+    updates["total_collected"] = account1 + account2 + account10 + account21 + account22
+
+    set_clause = ", ".join(f"{col} = ?" for col in updates)
+    params = list(updates.values()) + [collection_id]
+    db.execute(conn, f"UPDATE collections SET {set_clause} WHERE collection_id = ?", params)
+    conn.commit()
+    conn.close()
+    return {"success": True, "collection_id": collection_id, **updates}
+
+
+@app.delete("/api/collections/{collection_id}")
+def delete_collection(collection_id: int):
+    """Delete a collection entry (payment received)."""
+    conn = get_db_connection()
+    cursor = db.execute(conn, "SELECT collection_id FROM collections WHERE collection_id = ?", (collection_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Collection entry not found")
+
+    db.execute(conn, "DELETE FROM collections WHERE collection_id = ?", (collection_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "collection_id": collection_id}
 
 
 @app.get("/api/redbook")

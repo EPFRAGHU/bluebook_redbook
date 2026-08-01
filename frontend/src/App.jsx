@@ -4,7 +4,7 @@ import {
   Users, Mail, Shield, ShieldAlert, Gavel, Calendar, X,
   UserCheck, Plus, Trash2, BookOpen, FileText, Clock,
   CheckCircle2, ListChecks, IndianRupee, BarChart3,
-  Stamp, Landmark, AlertTriangle, LogOut
+  Stamp, Landmark, AlertTriangle, LogOut, Pencil
 } from 'lucide-react';
 
 const API_BASE = "/api";
@@ -126,6 +126,32 @@ export default function App() {
     account1: 0, account2: 0, account10: 0, account21: 0, account22: 0
   });
   const [isSubmittingCollection, setIsSubmittingCollection] = useState(false);
+
+  // Edit Case Modal (Blue Book / Active Inquiries)
+  const [showEditCaseModal, setShowEditCaseModal] = useState(false);
+  const [editCase, setEditCase] = useState(null);
+  const [editCaseForm, setEditCaseForm] = useState({
+    inquiry_section: '7A', assessing_officer: '', period_from: '', period_to: '',
+    current_ndh: '', status: 'ACTIVE'
+  });
+  const [isSavingCaseEdit, setIsSavingCaseEdit] = useState(false);
+
+  // Edit Red Book Modal
+  const [showEditRedbookModal, setShowEditRedbookModal] = useState(false);
+  const [editRedbook, setEditRedbook] = useState(null);
+  const [editRedbookForm, setEditRedbookForm] = useState({
+    order_date: '', account1: 0, account2: 0, account10: 0, account21: 0, account22: 0
+  });
+  const [isSavingRedbookEdit, setIsSavingRedbookEdit] = useState(false);
+
+  // Edit Collection Modal
+  const [showEditCollectionModal, setShowEditCollectionModal] = useState(false);
+  const [editCollection, setEditCollection] = useState(null);
+  const [editCollectionForm, setEditCollectionForm] = useState({
+    collection_date: '', mode: 'CHEQUE', instrument_no: '',
+    account1: 0, account2: 0, account10: 0, account21: 0, account22: 0
+  });
+  const [isSavingCollectionEdit, setIsSavingCollectionEdit] = useState(false);
 
   // Case Tracking Flags (8F Issued / NIR / Bank A/c Attached)
   const [nirModalCase, setNirModalCase] = useState(null);
@@ -308,6 +334,186 @@ export default function App() {
       alert("Failed to connect to backend server.");
     } finally {
       setIsSubmittingCollection(false);
+    }
+  };
+
+  const openEditCaseModal = (c) => {
+    setEditCase(c);
+    setEditCaseForm({
+      inquiry_section: c.inquiry_section || '7A',
+      assessing_officer: c.assessing_officer || '',
+      period_from: c.period_from || '',
+      period_to: c.period_to || '',
+      current_ndh: c.current_ndh || '',
+      status: c.status || 'ACTIVE'
+    });
+    setShowEditCaseModal(true);
+  };
+
+  const submitCaseEdit = async (e) => {
+    e.preventDefault();
+    if (!editCase) return;
+    setIsSavingCaseEdit(true);
+    try {
+      const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(editCase.case_no)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editCaseForm)
+      });
+      if (res.ok) {
+        alert(`✅ Case ${editCase.case_no} updated.`);
+        setShowEditCaseModal(false);
+        refreshCurrentView();
+      } else {
+        const errData = await res.json();
+        alert(`Error: ${errData.detail || 'Failed to update case'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to connect to backend server.");
+    } finally {
+      setIsSavingCaseEdit(false);
+    }
+  };
+
+  const deleteCase = async (c) => {
+    if (!window.confirm(`Delete case ${c.case_no}?\nThis will also remove its hearings, Red Book entry and collections. This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(c.case_no)}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        alert(`🗑️ Case ${c.case_no} deleted.`);
+        setSelectedCase(null);
+        setShowEditCaseModal(false);
+        refreshCurrentView();
+      } else {
+        const errData = await res.json();
+        alert(`Error: ${errData.detail || 'Failed to delete case'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to connect to backend server.");
+    }
+  };
+
+  const openEditRedbookModal = (r) => {
+    setEditRedbook(r);
+    setEditRedbookForm({
+      order_date: r.order_date || '',
+      account1: r.account1 || 0, account2: r.account2 || 0, account10: r.account10 || 0,
+      account21: r.account21 || 0, account22: r.account22 || 0
+    });
+    setShowEditRedbookModal(true);
+  };
+
+  const submitRedbookEdit = async (e) => {
+    e.preventDefault();
+    if (!editRedbook) return;
+    setIsSavingRedbookEdit(true);
+    try {
+      const res = await fetch(`${API_BASE}/redbook/${encodeURIComponent(editRedbook.case_no)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editRedbookForm)
+      });
+      if (res.ok) {
+        alert(`✅ Red Book entry ${editRedbook.case_no} updated.`);
+        setShowEditRedbookModal(false);
+        refreshCurrentView();
+      } else {
+        const errData = await res.json();
+        alert(`Error: ${errData.detail || 'Failed to update Red Book entry'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to connect to backend server.");
+    } finally {
+      setIsSavingRedbookEdit(false);
+    }
+  };
+
+  const deleteRedbook = async (r) => {
+    if (!window.confirm(`Delete Red Book entry ${r.case_no}?\nIts collection payments will also be removed. This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/redbook/${encodeURIComponent(r.case_no)}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        alert(`🗑️ Red Book entry ${r.case_no} deleted.`);
+        refreshCurrentView();
+      } else {
+        const errData = await res.json();
+        alert(`Error: ${errData.detail || 'Failed to delete Red Book entry'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to connect to backend server.");
+    }
+  };
+
+  const openEditCollectionModal = (col) => {
+    setEditCollection(col);
+    setEditCollectionForm({
+      collection_date: col.collection_date || '',
+      mode: col.mode || 'CHEQUE',
+      instrument_no: col.instrument_no || '',
+      account1: col.account1 || 0, account2: col.account2 || 0, account10: col.account10 || 0,
+      account21: col.account21 || 0, account22: col.account22 || 0
+    });
+    setShowEditCollectionModal(true);
+  };
+
+  const submitCollectionEdit = async (e) => {
+    e.preventDefault();
+    if (!editCollection) return;
+    setIsSavingCollectionEdit(true);
+    try {
+      const res = await fetch(`${API_BASE}/collections/${editCollection.collection_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editCollectionForm)
+      });
+      if (res.ok) {
+        alert(`✅ Collection entry updated.`);
+        setShowEditCollectionModal(false);
+        fetchCollections(searchTerm, collectionMonth);
+        fetchMonthlyCollections(collectionsFy);
+        fetchEstablishments(searchTerm, page, limit, activeTab);
+        fetchStats();
+        fetchMonthly(fyYear);
+      } else {
+        const errData = await res.json();
+        alert(`Error: ${errData.detail || 'Failed to update collection'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to connect to backend server.");
+    } finally {
+      setIsSavingCollectionEdit(false);
+    }
+  };
+
+  const deleteCollection = async (col) => {
+    if (!window.confirm(`Delete this collection entry (${col.instrument_no || ''} · ₹${fmtMoney(col.total_collected)})? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/collections/${col.collection_id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        alert(`🗑️ Collection entry deleted.`);
+        fetchCollections(searchTerm, collectionMonth);
+        fetchMonthlyCollections(collectionsFy);
+        fetchEstablishments(searchTerm, page, limit, activeTab);
+        fetchStats();
+        fetchMonthly(fyYear);
+      } else {
+        const errData = await res.json();
+        alert(`Error: ${errData.detail || 'Failed to delete collection'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to connect to backend server.");
     }
   };
 
@@ -849,6 +1055,7 @@ export default function App() {
                     <th className="p-3 text-center">Payment Date</th>
                     <th className="p-3 text-center">Cheque / DD No.</th>
                     <th className="p-3 text-center">Mode</th>
+                    <th className="p-3 text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody className="text-xs divide-y divide-slate-100">
@@ -872,6 +1079,22 @@ export default function App() {
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${col.mode === 'DD' ? 'bg-amber-100 text-amber-700' : 'bg-teal-100 text-teal-700'}`}>
                           {col.mode || 'CHEQUE'}
                         </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => openEditCollectionModal(col)}
+                            title="Edit collection entry"
+                            className="bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-700 p-1.5 rounded-lg transition">
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => deleteCollection(col)}
+                            title="Delete collection entry"
+                            className="bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 p-1.5 rounded-lg transition">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1023,11 +1246,25 @@ export default function App() {
                               </button>
                             </td>
                             <td className="p-3 text-right">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); openCaseDetail(c); }}
-                                className="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 ml-auto">
-                                <ListChecks size={13} /> View
-                              </button>
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); openEditCaseModal(c); }}
+                                  title="Edit case"
+                                  className="bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-700 p-1.5 rounded-lg transition">
+                                  <Pencil size={14} />
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); deleteCase(c); }}
+                                  title="Delete case"
+                                  className="bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 p-1.5 rounded-lg transition">
+                                  <Trash2 size={14} />
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); openCaseDetail(c); }}
+                                  className="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1">
+                                  <ListChecks size={13} /> View
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -1121,11 +1358,25 @@ export default function App() {
                               <span className="text-[10px] font-mono text-slate-400 block">{r.last_collection_date || 'No payment yet'}</span>
                             </td>
                             <td className="p-3 text-right border-x border-slate-200 border-r-2 border-slate-500">
-                              <button
-                                onClick={() => openCollectionModal(r)}
-                                className="bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 ml-auto">
-                                <IndianRupee size={13} /> Record
-                              </button>
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  onClick={() => openEditRedbookModal(r)}
+                                  title="Edit Red Book entry"
+                                  className="bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-700 p-1.5 rounded-lg transition">
+                                  <Pencil size={14} />
+                                </button>
+                                <button
+                                  onClick={() => deleteRedbook(r)}
+                                  title="Delete Red Book entry"
+                                  className="bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 p-1.5 rounded-lg transition">
+                                  <Trash2 size={14} />
+                                </button>
+                                <button
+                                  onClick={() => openCollectionModal(r)}
+                                  className="bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1">
+                                  <IndianRupee size={13} /> Record
+                                </button>
+                              </div>
                             </td>
                           </tr>
                           );
@@ -1917,6 +2168,260 @@ export default function App() {
                   disabled={isSavingNir}
                   className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold shadow-sm disabled:opacity-50 text-sm">
                   {isSavingNir ? 'Saving...' : 'Confirm NIR'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 8: EDIT CASE */}
+      {showEditCaseModal && editCase && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[80]">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 relative">
+            <button
+              onClick={() => setShowEditCaseModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+              <X size={20} />
+            </button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-amber-100 text-amber-600 p-2.5 rounded-xl">
+                <Pencil size={22} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Edit Case</h3>
+                <p className="text-xs text-slate-500 font-mono">{editCase.case_no} · {editCase.EST_NAME || ''}</p>
+              </div>
+            </div>
+
+            <form onSubmit={submitCaseEdit} className="space-y-4 text-sm font-semibold">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-600 mb-1">Section</label>
+                  <input
+                    type="text"
+                    required
+                    value={editCaseForm.inquiry_section}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, inquiry_section: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1">Status</label>
+                  <select
+                    value={editCaseForm.status}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, status: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl outline-none font-semibold bg-white">
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="CONCLUDED">CONCLUDED</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-slate-600 mb-1">Assessing Officer</label>
+                <input
+                  type="text"
+                  value={editCaseForm.assessing_officer}
+                  onChange={(e) => setEditCaseForm({ ...editCaseForm, assessing_officer: e.target.value })}
+                  className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-600 mb-1">Period From</label>
+                  <input
+                    type="text"
+                    value={editCaseForm.period_from}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, period_from: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1">Period To</label>
+                  <input
+                    type="text"
+                    value={editCaseForm.period_to}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, period_to: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-slate-600 mb-1">Next Date of Hearing</label>
+                <input
+                  type="date"
+                  value={editCaseForm.current_ndh || ''}
+                  onChange={(e) => setEditCaseForm({ ...editCaseForm, current_ndh: e.target.value })}
+                  className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
+                />
+              </div>
+              <div className="pt-1 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditCaseModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold text-sm">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCaseEdit}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-sm disabled:opacity-50 text-sm">
+                  {isSavingCaseEdit ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 9: EDIT RED BOOK */}
+      {showEditRedbookModal && editRedbook && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[80]">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 relative">
+            <button
+              onClick={() => setShowEditRedbookModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+              <X size={20} />
+            </button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-rose-100 text-rose-600 p-2.5 rounded-xl">
+                <BookOpen size={22} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Edit Red Book Entry</h3>
+                <p className="text-xs text-slate-500 font-mono">{editRedbook.case_no} · {editRedbook.EST_NAME || ''}</p>
+              </div>
+            </div>
+
+            <form onSubmit={submitRedbookEdit} className="space-y-4 text-sm font-semibold">
+              <div>
+                <label className="block text-slate-600 mb-1">Order Date</label>
+                <input
+                  type="date"
+                  value={editRedbookForm.order_date || ''}
+                  onChange={(e) => setEditRedbookForm({ ...editRedbookForm, order_date: e.target.value })}
+                  className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-600 mb-1">Amount Assessed (A/c-wise)</label>
+                <div className="grid grid-cols-5 gap-2">
+                  {ACCOUNT_HEADS.map((h) => (
+                    <div key={h.key}>
+                      <label className="block text-[10px] text-slate-500 mb-1">{h.label}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={editRedbookForm[h.key]}
+                        onChange={(e) => setEditRedbookForm({ ...editRedbookForm, [h.key]: parseFloat(e.target.value) || 0 })}
+                        className="w-full p-2 border border-slate-300 rounded-lg outline-none font-medium text-center"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="pt-1 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditRedbookModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold text-sm">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingRedbookEdit}
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold shadow-sm disabled:opacity-50 text-sm">
+                  {isSavingRedbookEdit ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 10: EDIT COLLECTION */}
+      {showEditCollectionModal && editCollection && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[80]">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 relative">
+            <button
+              onClick={() => setShowEditCollectionModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+              <X size={20} />
+            </button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-teal-100 text-teal-600 p-2.5 rounded-xl">
+                <IndianRupee size={22} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Edit Collection Entry</h3>
+                <p className="text-xs text-slate-500 font-mono">{editCollection.instrument_no || ''} · {editCollection.EST_NAME || ''}</p>
+              </div>
+            </div>
+
+            <form onSubmit={submitCollectionEdit} className="space-y-4 text-sm font-semibold">
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-600 mb-1">Payment Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={editCollectionForm.collection_date || ''}
+                    onChange={(e) => setEditCollectionForm({ ...editCollectionForm, collection_date: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1">Mode</label>
+                  <select
+                    value={editCollectionForm.mode}
+                    onChange={(e) => setEditCollectionForm({ ...editCollectionForm, mode: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl outline-none font-semibold bg-white">
+                    <option value="CHEQUE">CHEQUE</option>
+                    <option value="DD">DD</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1">Chq / DD No.</label>
+                  <input
+                    type="text"
+                    required
+                    value={editCollectionForm.instrument_no}
+                    onChange={(e) => setEditCollectionForm({ ...editCollectionForm, instrument_no: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-slate-600 mb-1">Amount (A/c-wise)</label>
+                <div className="grid grid-cols-5 gap-2">
+                  {ACCOUNT_HEADS.map((h) => (
+                    <div key={h.key}>
+                      <label className="block text-[10px] text-slate-500 mb-1">{h.label}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={editCollectionForm[h.key]}
+                        onChange={(e) => setEditCollectionForm({ ...editCollectionForm, [h.key]: parseFloat(e.target.value) || 0 })}
+                        className="w-full p-2 border border-slate-300 rounded-lg outline-none font-medium text-center"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="pt-1 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditCollectionModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold text-sm">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCollectionEdit}
+                  className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold shadow-sm disabled:opacity-50 text-sm">
+                  {isSavingCollectionEdit ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>
