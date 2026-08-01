@@ -10,6 +10,8 @@ Internal/External connection string as DATABASE_URL).
 import os
 import sqlite3
 
+from psycopg2.extras import execute_values
+
 import db
 
 
@@ -17,25 +19,25 @@ def source_sqlite_connection():
     return sqlite3.connect(db.SQLITE_DB)
 
 
-def copy_table(src_conn, dst_conn, table, columns):
+def copy_table(src_conn, dst_conn, table, columns, batch_size=2000):
     src = src_conn.cursor()
     dst = dst_conn.cursor()
     src.execute(f"SELECT {', '.join(columns)} FROM {table}")
-    rows = src.fetchall()
 
-    placeholders = ", ".join(["?"] * len(columns))
     col_sql = ", ".join(columns)
-    sql = f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders})"
+    sql = f"INSERT INTO {table} ({col_sql}) VALUES %s"
 
     inserted = 0
-    for row in rows:
-        dst.execute(db._translate(sql), list(row))
-        inserted += 1
-        if inserted % 5000 == 0:
-            dst_conn.commit()
-            print(f"  {table}: {inserted} rows...")
+    while True:
+        rows = src.fetchmany(batch_size)
+        if not rows:
+            break
+        # execute_values takes a list of tuples; uses multi-row VALUES (...),(...)
+        execute_values(dst, sql, [tuple(r) for r in rows], page_size=1000)
+        inserted += len(rows)
+        dst_conn.commit()
+        print(f"  {table}: {inserted} rows...")
 
-    dst_conn.commit()
     print(f"  {table}: {inserted} rows copied (total)")
     return inserted
 
@@ -83,6 +85,13 @@ def main():
             "created_at",
         ],
     }
+
+    # Clear any previously-migrated rows so re-runs are idempotent.
+    for table in tables:
+        cur = dst_conn.cursor()
+        cur.execute(f"TRUNCATE {table} RESTART IDENTITY CASCADE")
+    dst_conn.commit()
+    print("Cleared target tables.")
 
     for table, columns in tables.items():
         print(f"Copying {table}...")
