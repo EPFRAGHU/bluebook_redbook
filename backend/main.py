@@ -1,14 +1,17 @@
-import sqlite3
-import uuid
 import os
+import uuid
 import calendar
 from datetime import date
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="EPFO RO Bhubaneswar Inquiry Portal API", version="3.0")
+import db
+
+app = FastAPI(title="EPFO RO Bhubaneswar Inquiry Portal API", version="3.1")
 
 # Enable CORS for React frontend
 app.add_middleware(
@@ -19,148 +22,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# SQLite Database connection (absolute path so this always works regardless of CWD)
-DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "database.db")
-
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return db.get_db_connection()
 
 
 def ensure_column(cursor, table, column, coltype):
-    """Add a column to a table if it doesn't already exist (safe migration)."""
-    cursor.execute(f"PRAGMA table_info({table})")
-    existing_cols = [row["name"] for row in cursor.fetchall()]
-    if column not in existing_cols:
-        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+    db.ensure_column(cursor, table, column, coltype)
 
 
 @app.on_event("startup")
 def startup_event():
     conn = get_db_connection()
-    cursor = conn.cursor()
+    try:
+        db.create_tables(conn)
+        tables = db.list_tables(conn)
+        print("--> TABLES FOUND IN DB:", tables)
 
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = [row["name"] for row in cursor.fetchall()]
-    print("--> TABLES FOUND IN DB:", tables)
+        if "establishments" not in tables:
+            print("--> WARNING: 'establishments' table not found. Run backend/seed_pg.py to migrate data, or backend/fix_import.py for local SQLite.")
 
-    if "establishments" not in tables:
-        print("--> WARNING: 'establishments' table not found. Run backend/fix_import.py to import the master CSV first.")
+        # Backfill hearing_log #1 for any legacy cases that predate this table
+        cursor = db.execute(conn, """
+            SELECT c.case_no, c.current_ndh FROM cases_7a c
+            WHERE NOT EXISTS (SELECT 1 FROM hearing_log h WHERE h.case_no = c.case_no)
+        """)
+        legacy_cases = cursor.fetchall()
+        for lc in legacy_cases:
+            db.execute(conn, """
+                INSERT INTO hearing_log (case_no, hearing_no, hearing_date, proceedings_summary, next_hearing_date)
+                VALUES (?, 1, ?, 'Inquiry initiated. Summons issued.', ?)
+            """, (lc["case_no"], date.today().isoformat(), lc["current_ndh"]))
 
-    # ---- cases_7a : the "Blue Book" master case register ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS cases_7a (
-            case_no TEXT PRIMARY KEY,
-            est_id TEXT,
-            inquiry_section TEXT DEFAULT '7A',
-            assessing_officer TEXT,
-            period_from TEXT,
-            period_to TEXT,
-            current_ndh TEXT,
-            hearing_count INTEGER DEFAULT 1,
-            status TEXT DEFAULT 'ACTIVE',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            f8_issued INTEGER DEFAULT 0,
-            nir_status TEXT DEFAULT 'IR',
-            nir_cause TEXT,
-            nir_case_no TEXT,
-            nir_case_date TEXT,
-            bank_ac_attached INTEGER DEFAULT 0
-        )
-    """)
-    ensure_column(cursor, "cases_7a", "inquiry_section", "TEXT DEFAULT '7A'")
-    ensure_column(cursor, "cases_7a", "current_ndh", "TEXT")
-    ensure_column(cursor, "cases_7a", "hearing_count", "INTEGER DEFAULT 1")
-    ensure_column(cursor, "cases_7a", "status", "TEXT DEFAULT 'ACTIVE'")
-    ensure_column(cursor, "cases_7a", "created_at", "TIMESTAMP")
-    ensure_column(cursor, "cases_7a", "f8_issued", "INTEGER DEFAULT 0")
-    ensure_column(cursor, "cases_7a", "nir_status", "TEXT DEFAULT 'IR'")
-    ensure_column(cursor, "cases_7a", "nir_cause", "TEXT")
-    ensure_column(cursor, "cases_7a", "nir_case_no", "TEXT")
-    ensure_column(cursor, "cases_7a", "nir_case_date", "TEXT")
-    ensure_column(cursor, "cases_7a", "bank_ac_attached", "INTEGER DEFAULT 0")
-
-    # ---- hearing_log : sequential line-by-line hearing history per case ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS hearing_log (
-            log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            case_no TEXT,
-            hearing_no INTEGER,
-            hearing_date TEXT,
-            proceedings_summary TEXT,
-            next_hearing_date TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # Backfill hearing_log #1 for any legacy cases that predate this table
-    cursor.execute("""
-        SELECT c.case_no, c.current_ndh FROM cases_7a c
-        WHERE NOT EXISTS (SELECT 1 FROM hearing_log h WHERE h.case_no = c.case_no)
-    """)
-    legacy_cases = cursor.fetchall()
-    for lc in legacy_cases:
-        cursor.execute("""
-            INSERT INTO hearing_log (case_no, hearing_no, hearing_date, proceedings_summary, next_hearing_date)
-            VALUES (?, 1, ?, 'Inquiry initiated. Summons issued.', ?)
-        """, (lc["case_no"], date.today().isoformat(), lc["current_ndh"]))
-
-    # ---- redbook : recovery / defaulter register with EPF account-head-wise dues ----
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='redbook'")
-    redbook_exists = cursor.fetchone() is not None
-    if redbook_exists:
-        cursor.execute("PRAGMA table_info(redbook)")
-        cols = [r["name"] for r in cursor.fetchall()]
-        if "account1" not in cols:
-            cursor.execute("SELECT COUNT(*) as c FROM redbook")
-            if cursor.fetchone()["c"] == 0:
-                cursor.execute("DROP TABLE redbook")
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS redbook (
-            case_no TEXT PRIMARY KEY,
-            est_id TEXT,
-            order_date TEXT,
-            account1 REAL DEFAULT 0,
-            account2 REAL DEFAULT 0,
-            account10 REAL DEFAULT 0,
-            account21 REAL DEFAULT 0,
-            account22 REAL DEFAULT 0,
-            total_assessed REAL DEFAULT 0
-        )
-    """)
-    ensure_column(cursor, "redbook", "order_date", "TEXT")
-    ensure_column(cursor, "redbook", "account1", "REAL DEFAULT 0")
-    ensure_column(cursor, "redbook", "account2", "REAL DEFAULT 0")
-    ensure_column(cursor, "redbook", "account10", "REAL DEFAULT 0")
-    ensure_column(cursor, "redbook", "account21", "REAL DEFAULT 0")
-    ensure_column(cursor, "redbook", "account22", "REAL DEFAULT 0")
-    ensure_column(cursor, "redbook", "total_assessed", "REAL DEFAULT 0")
-
-    # ---- collections : payment received register (cheque / DD) against redbook cases ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS collections (
-            collection_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            case_no TEXT,
-            est_id TEXT,
-            collection_date TEXT,
-            mode TEXT,
-            instrument_no TEXT,
-            account1 REAL DEFAULT 0,
-            account2 REAL DEFAULT 0,
-            account10 REAL DEFAULT 0,
-            account21 REAL DEFAULT 0,
-            account22 REAL DEFAULT 0,
-            total_collected REAL DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    ensure_column(cursor, "collections", "instrument_no", "TEXT")
-
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
 
 
 class InquiryRequest(BaseModel):
@@ -232,7 +128,6 @@ def search_establishments(
     limit: int = 10
 ):
     conn = get_db_connection()
-    cursor = conn.cursor()
     offset = (page - 1) * limit
     search_pattern = f"%{q.strip()}%" if q.strip() else "%"
 
@@ -243,14 +138,14 @@ def search_establishments(
             WHERE est_id LIKE ? OR est_name LIKE ? OR pan LIKE ?
             LIMIT ? OFFSET ?
         """
-        cursor.execute(query, (search_pattern, search_pattern, search_pattern, limit, offset))
+        cursor = db.execute(conn, query, (search_pattern, search_pattern, search_pattern, limit, offset))
         data = [dict(row) for row in cursor.fetchall()]
 
         count_query = """
             SELECT COUNT(*) as total FROM establishments
             WHERE est_id LIKE ? OR est_name LIKE ? OR pan LIKE ?
         """
-        cursor.execute(count_query, (search_pattern, search_pattern, search_pattern))
+        cursor = db.execute(conn, count_query, (search_pattern, search_pattern, search_pattern))
         total = cursor.fetchone()["total"]
     except Exception as e:
         print("Search/Load error:", e)
@@ -263,7 +158,6 @@ def search_establishments(
 
 def fetch_cases(status_filter=None, ndh_today=False, q="", page=1, limit=10):
     conn = get_db_connection()
-    cursor = conn.cursor()
     offset = (page - 1) * limit
     search_pattern = f"%{q.strip()}%" if q.strip() else "%"
 
@@ -300,7 +194,7 @@ def fetch_cases(status_filter=None, ndh_today=False, q="", page=1, limit=10):
             ORDER BY c.created_at DESC
             LIMIT ? OFFSET ?
         """
-        cursor.execute(query, (*params, limit, offset))
+        cursor = db.execute(conn, query, (*params, limit, offset))
         data = [dict(row) for row in cursor.fetchall()]
 
         count_query = f"""
@@ -309,7 +203,7 @@ def fetch_cases(status_filter=None, ndh_today=False, q="", page=1, limit=10):
             LEFT JOIN establishments e ON c.est_id = e.est_id
             WHERE {where_sql}
         """
-        cursor.execute(count_query, params)
+        cursor = db.execute(conn, count_query, params)
         total = cursor.fetchone()["total"]
     except Exception as e:
         print("Cases fetch error:", e)
@@ -342,8 +236,7 @@ def get_hearings_today(q: str = "", page: int = 1, limit: int = 10):
 def get_case_hearings(case_no: str = Query(..., description="Case number (URL-encoded if contains slashes)")):
     """Line-by-line hearing history (1st, 2nd, 3rd... hearing) for a given case."""
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+    cursor = db.execute(conn, """
         SELECT log_id, case_no, hearing_no, hearing_date, proceedings_summary, next_hearing_date, created_at
         FROM hearing_log
         WHERE case_no = ?
@@ -375,15 +268,14 @@ def update_case_tracking(case_no: str, payload: CaseTrackingRequest):
         raise HTTPException(status_code=400, detail="No tracking fields provided")
 
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT case_no FROM cases_7a WHERE case_no = ?", (case_no,))
+    cursor = db.execute(conn, "SELECT case_no FROM cases_7a WHERE case_no = ?", (case_no,))
     if not cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=404, detail="Case not found")
 
     set_clause = ", ".join(f"{col} = ?" for col in updates)
     params = list(updates.values()) + [case_no]
-    cursor.execute(f"UPDATE cases_7a SET {set_clause} WHERE case_no = ?", params)
+    db.execute(conn, f"UPDATE cases_7a SET {set_clause} WHERE case_no = ?", params)
     conn.commit()
     conn.close()
     return {"success": True, "case_no": case_no, **updates}
@@ -392,7 +284,6 @@ def update_case_tracking(case_no: str, payload: CaseTrackingRequest):
 @app.get("/api/redbook")
 def get_redbook(q: str = "", page: int = 1, limit: int = 10):
     conn = get_db_connection()
-    cursor = conn.cursor()
     offset = (page - 1) * limit
     search_pattern = f"%{q.strip()}%" if q.strip() else "%"
 
@@ -436,7 +327,7 @@ def get_redbook(q: str = "", page: int = 1, limit: int = 10):
             ORDER BY r.order_date DESC
             LIMIT ? OFFSET ?
         """
-        cursor.execute(query, (search_pattern, search_pattern, search_pattern, limit, offset))
+        cursor = db.execute(conn, query, (search_pattern, search_pattern, search_pattern, limit, offset))
         data = [dict(row) for row in cursor.fetchall()]
 
         count_query = """
@@ -445,7 +336,7 @@ def get_redbook(q: str = "", page: int = 1, limit: int = 10):
             LEFT JOIN establishments e ON r.est_id = e.est_id
             WHERE (e.est_name LIKE ? OR e.est_id LIKE ? OR r.case_no LIKE ?)
         """
-        cursor.execute(count_query, (search_pattern, search_pattern, search_pattern))
+        cursor = db.execute(conn, count_query, (search_pattern, search_pattern, search_pattern))
         total = cursor.fetchone()["total"]
     except Exception as e:
         print("Redbook fetch error:", e)
@@ -460,7 +351,6 @@ def get_redbook(q: str = "", page: int = 1, limit: int = 10):
 def get_collections(q: str = "", month: str = "", page: int = 1, limit: int = 100):
     """Month-wise collection register. Each row = one payment received (cheque/DD) per establishment."""
     conn = get_db_connection()
-    cursor = conn.cursor()
     offset = (page - 1) * limit
     search_pattern = f"%{q.strip()}%" if q.strip() else "%"
 
@@ -491,7 +381,7 @@ def get_collections(q: str = "", month: str = "", page: int = 1, limit: int = 10
             ORDER BY col.collection_date DESC, col.collection_id DESC
             LIMIT ? OFFSET ?
         """
-        cursor.execute(query, (*params, limit, offset))
+        cursor = db.execute(conn, query, (*params, limit, offset))
         data = [dict(row) for row in cursor.fetchall()]
 
         count_query = f"""
@@ -501,7 +391,7 @@ def get_collections(q: str = "", month: str = "", page: int = 1, limit: int = 10
             LEFT JOIN establishments e ON col.est_id = e.est_id
             {where_sql}
         """
-        cursor.execute(count_query, params)
+        cursor = db.execute(conn, count_query, params)
         total = cursor.fetchone()["total"]
     except Exception as e:
         print("Collections fetch error:", e)
@@ -516,14 +406,13 @@ def get_collections(q: str = "", month: str = "", page: int = 1, limit: int = 10
 def get_collections_monthly(year: Optional[int] = None):
     """Account-wise monthly collection summary for a financial year (April to March)."""
     conn = get_db_connection()
-    cursor = conn.cursor()
     today = date.today()
     fy = year if year else (today.year if today.month >= 4 else today.year - 1)
 
     try:
-        cursor.execute("SELECT SUM(total_collected) FROM collections")
+        cursor = db.execute(conn, "SELECT SUM(total_collected) FROM collections")
         total = cursor.fetchone()[0] or 0
-        cursor.execute("SELECT COUNT(*) FROM collections")
+        cursor = db.execute(conn, "SELECT COUNT(*) FROM collections")
         count = cursor.fetchone()[0]
     except Exception as e:
         print("Collections monthly error:", e)
@@ -539,7 +428,7 @@ def get_collections_monthly(year: Optional[int] = None):
             y = fy + 1
         ym = f"{y:04d}-{m:02d}"
         try:
-            cursor.execute("""
+            cursor = db.execute(conn, """
                 SELECT
                     COALESCE(SUM(account1),0) AS a1, COALESCE(SUM(account2),0) AS a2,
                     COALESCE(SUM(account10),0) AS a10, COALESCE(SUM(account21),0) AS a21,
@@ -570,9 +459,8 @@ def add_collection(req: CollectionRequest):
     Multiple payments allowed for the same establishment/period, but each
     cheque/DD instrument number must be unique."""
     conn = get_db_connection()
-    cursor = conn.cursor()
     try:
-        cursor.execute("SELECT est_id FROM redbook WHERE case_no = ?", (req.case_no,))
+        cursor = db.execute(conn, "SELECT est_id FROM redbook WHERE case_no = ?", (req.case_no,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Case not found in Red Book")
@@ -581,7 +469,7 @@ def add_collection(req: CollectionRequest):
         if not instrument_no:
             raise HTTPException(status_code=400, detail="Cheque/DD number is required")
 
-        cursor.execute(
+        cursor = db.execute(conn,
             "SELECT collection_id FROM collections WHERE case_no = ? AND instrument_no = ?",
             (req.case_no, instrument_no)
         )
@@ -592,17 +480,20 @@ def add_collection(req: CollectionRequest):
             )
 
         total = req.account1 + req.account2 + req.account10 + req.account21 + req.account22
-        cursor.execute("""
+        returning = " RETURNING collection_id" if db.is_postgres() else ""
+        cursor = db.execute(conn, f"""
             INSERT INTO collections
                 (case_no, est_id, collection_date, mode, instrument_no,
                  account1, account2, account10, account21, account22, total_collected)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            {returning}
         """, (
             req.case_no, row["est_id"], req.collection_date, req.mode.upper(), instrument_no,
             req.account1, req.account2, req.account10, req.account21, req.account22, total
         ))
         conn.commit()
-        return {"success": True, "collection_id": cursor.lastrowid, "total_collected": total}
+        collection_id = cursor.fetchone()["collection_id"] if db.is_postgres() else cursor.lastrowid
+        return {"success": True, "collection_id": collection_id, "total_collected": total}
     except HTTPException:
         raise
     except Exception as e:
@@ -615,22 +506,21 @@ def add_collection(req: CollectionRequest):
 @app.get("/api/dashboard/stats")
 def get_dashboard_stats():
     conn = get_db_connection()
-    cursor = conn.cursor()
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM cases_7a WHERE status = 'ACTIVE'")
+        cursor = db.execute(conn, "SELECT COUNT(*) as count FROM cases_7a WHERE status = 'ACTIVE'")
         active_7a_cases = cursor.fetchone()["count"]
 
-        cursor.execute(
+        cursor = db.execute(conn,
             "SELECT COUNT(*) as count FROM cases_7a WHERE status = 'ACTIVE' AND current_ndh = ?",
             (str(date.today()),)
         )
         hearings_today = cursor.fetchone()["count"]
 
-        cursor.execute("SELECT SUM(total_assessed) as total FROM redbook")
+        cursor = db.execute(conn, "SELECT SUM(total_assessed) as total FROM redbook")
         res = cursor.fetchone()["total"]
         total_amount_assessed = res if res else 0
 
-        cursor.execute("SELECT COUNT(*) as count FROM redbook")
+        cursor = db.execute(conn, "SELECT COUNT(*) as count FROM redbook")
         redbook_defaulters = cursor.fetchone()["count"]
     except Exception as e:
         print("Dashboard stats error:", e)
@@ -654,14 +544,13 @@ def get_monthly_dashboard(year: Optional[int] = None):
     Disposed = cases finalised (entered in Red Book) in the month,
     Closing = opening + added - disposed."""
     conn = get_db_connection()
-    cursor = conn.cursor()
     today = date.today()
     fy = year if year else (today.year if today.month >= 4 else today.year - 1)
 
     try:
-        cursor.execute("SELECT substr(created_at, 1, 10) AS d FROM cases_7a")
+        cursor = db.execute(conn, "SELECT substr(created_at, 1, 10) AS d FROM cases_7a")
         created_dates = [row["d"] for row in cursor.fetchall() if row["d"]]
-        cursor.execute("SELECT order_date AS d FROM redbook")
+        cursor = db.execute(conn, "SELECT order_date AS d FROM redbook")
         disposed_dates = [row["d"] for row in cursor.fetchall() if row["d"]]
     except Exception as e:
         print("Monthly dashboard error:", e)
@@ -703,11 +592,10 @@ def get_monthly_dashboard(year: Optional[int] = None):
 @app.post("/api/7a/initiate")
 def initiate_7a(req: InquiryRequest):
     conn = get_db_connection()
-    cursor = conn.cursor()
     try:
         unique_suffix = uuid.uuid4().hex[:6].upper()
         case_no = f"{req.inquiry_section}-{req.est_id}-{unique_suffix}"
-        cursor.execute("""
+        db.execute(conn, """
             INSERT INTO cases_7a
                 (case_no, est_id, inquiry_section, assessing_officer, period_from, period_to, current_ndh, hearing_count, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE')
@@ -716,7 +604,7 @@ def initiate_7a(req: InquiryRequest):
             req.period_from, req.period_to, req.first_hearing_date
         ))
         # Automatically record hearing #1 (initiation / summons)
-        cursor.execute("""
+        db.execute(conn, """
             INSERT INTO hearing_log (case_no, hearing_no, hearing_date, proceedings_summary, next_hearing_date)
             VALUES (?, 1, ?, ?, ?)
         """, (
@@ -737,9 +625,8 @@ def initiate_7a(req: InquiryRequest):
 def record_hearing(req: HearingRequest):
     """Record the next sequential hearing (2nd, 3rd, 4th...) for an active case."""
     conn = get_db_connection()
-    cursor = conn.cursor()
     try:
-        cursor.execute("SELECT hearing_count, status FROM cases_7a WHERE case_no = ?", (req.case_no,))
+        cursor = db.execute(conn, "SELECT hearing_count, status FROM cases_7a WHERE case_no = ?", (req.case_no,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Case not found")
@@ -747,12 +634,12 @@ def record_hearing(req: HearingRequest):
             raise HTTPException(status_code=400, detail="Case is already concluded; cannot add more hearings")
 
         next_no = (row["hearing_count"] or 0) + 1
-        cursor.execute("""
+        db.execute(conn, """
             INSERT INTO hearing_log (case_no, hearing_no, hearing_date, proceedings_summary, next_hearing_date)
             VALUES (?, ?, ?, ?, ?)
         """, (req.case_no, next_no, req.hearing_date, req.proceedings_summary, req.next_hearing_date))
 
-        cursor.execute("""
+        db.execute(conn, """
             UPDATE cases_7a SET hearing_count = ?, current_ndh = ? WHERE case_no = ?
         """, (next_no, req.next_hearing_date, req.case_no))
 
@@ -771,9 +658,8 @@ def record_hearing(req: HearingRequest):
 def finalize_order(req: FinalizeRequest):
     """Issue the final assessment order: totals A/c 1,2,10,21,22, closes the case and enters it into the Red Book."""
     conn = get_db_connection()
-    cursor = conn.cursor()
     try:
-        cursor.execute("SELECT est_id, status, hearing_count FROM cases_7a WHERE case_no = ?", (req.case_no,))
+        cursor = db.execute(conn, "SELECT est_id, status, hearing_count FROM cases_7a WHERE case_no = ?", (req.case_no,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Case not found")
@@ -782,7 +668,7 @@ def finalize_order(req: FinalizeRequest):
 
         total = req.account1 + req.account2 + req.account10 + req.account21 + req.account22
 
-        cursor.execute("""
+        db.execute(conn, """
             INSERT INTO redbook (case_no, est_id, order_date, account1, account2, account10, account21, account22, total_assessed)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
@@ -791,7 +677,7 @@ def finalize_order(req: FinalizeRequest):
         ))
 
         final_hearing_no = (row["hearing_count"] or 0) + 1
-        cursor.execute("""
+        db.execute(conn, """
             INSERT INTO hearing_log (case_no, hearing_no, hearing_date, proceedings_summary, next_hearing_date)
             VALUES (?, ?, ?, ?, NULL)
         """, (
@@ -799,7 +685,7 @@ def finalize_order(req: FinalizeRequest):
             f"Final assessment order issued. Total dues assessed: Rs.{total:,.2f}. Case concluded & entered into Red Book."
         ))
 
-        cursor.execute("""
+        db.execute(conn, """
             UPDATE cases_7a SET status = 'CONCLUDED', current_ndh = NULL, hearing_count = ? WHERE case_no = ?
         """, (final_hearing_no, req.case_no))
 
@@ -812,3 +698,11 @@ def finalize_order(req: FinalizeRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
+
+
+# ---- Serve the built React frontend (production) ----
+FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend", "dist")
+if os.path.isdir(FRONTEND_DIST):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+else:
+    print("--> frontend/dist not found; API-only mode (no UI).")
