@@ -172,6 +172,10 @@ def fetch_cases(status_filter=None, ndh_today=False, q="", page=1, limit=10):
     if status_filter:
         where_clauses.append("c.status = ?")
         params.append(status_filter)
+        # A case is only "active" if it has NOT been finalised. Any case with
+        # a Red Book assessment order is concluded even if its status flag was
+        # not updated (legacy data), so exclude it from active views.
+        where_clauses.append("NOT EXISTS (SELECT 1 FROM redbook rb WHERE rb.case_no = c.case_no)")
     if ndh_today:
         where_clauses.append("c.current_ndh = ?")
         params.append(str(date.today()))
@@ -512,13 +516,19 @@ def add_collection(req: CollectionRequest):
 def get_dashboard_stats():
     conn = get_db_connection()
     try:
-        cursor = db.execute(conn, "SELECT COUNT(*) as count FROM cases_7a WHERE status = 'ACTIVE'")
+        cursor = db.execute(conn, """
+            SELECT COUNT(*) as count FROM cases_7a c
+            WHERE c.status = 'ACTIVE'
+              AND NOT EXISTS (SELECT 1 FROM redbook rb WHERE rb.case_no = c.case_no)
+        """)
         active_7a_cases = cursor.fetchone()["count"]
 
-        cursor = db.execute(conn,
-            "SELECT COUNT(*) as count FROM cases_7a WHERE status = 'ACTIVE' AND current_ndh = ?",
-            (str(date.today()),)
-        )
+        cursor = db.execute(conn, """
+            SELECT COUNT(*) as count FROM cases_7a c
+            WHERE c.status = 'ACTIVE'
+              AND c.current_ndh = ?
+              AND NOT EXISTS (SELECT 1 FROM redbook rb WHERE rb.case_no = c.case_no)
+        """, (str(date.today()),))
         hearings_today = cursor.fetchone()["count"]
 
         cursor = db.execute(conn, "SELECT SUM(total_assessed) as total FROM redbook")
