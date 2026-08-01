@@ -784,7 +784,7 @@ export default function App() {
         {/* HEADER WITH NAV BUTTONS */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <div>
-            <span className="bg-blue-600 text-white text-xs px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">EPFO RO Bhubaneswar</span>
+            <span className="bg-blue-600 text-white text-xs px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">EPFO DO Cuttack</span>
             <h1 className="text-2xl font-bold text-slate-800 mt-1">Inquiry & Recovery Portal</h1>
           </div>
 
