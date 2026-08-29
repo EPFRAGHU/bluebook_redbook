@@ -142,16 +142,19 @@ class CollectionEditRequest(BaseModel):
 
 def est_columns_select(prefix="e"):
     """Standard aliasing of establishment columns to the names the frontend expects."""
+    # Alias identifiers are double-quoted so PostgreSQL preserves the exact
+    # upper-case names the frontend reads (unquoted identifiers fold to
+    # lower-case on Postgres; SQLite keeps them regardless).
     return f"""
-        {prefix}.est_id AS EST_ID,
-        {prefix}.est_name AS EST_NAME,
-        {prefix}.address1 AS ADDRESS1,
-        {prefix}.address2 AS ADDRESS2,
-        {prefix}.city AS CITY,
-        {prefix}.district_name AS DISTRICT_NAME,
-        {prefix}.primary_email AS PRIMARY_EMAIL,
-        {prefix}.no_of_uan AS NO_OF_UAN,
-        {prefix}.pan AS PAN
+        {prefix}.est_id AS "EST_ID",
+        {prefix}.est_name AS "EST_NAME",
+        {prefix}.address1 AS "ADDRESS1",
+        {prefix}.address2 AS "ADDRESS2",
+        {prefix}.city AS "CITY",
+        {prefix}.district_name AS "DISTRICT_NAME",
+        {prefix}.primary_email AS "PRIMARY_EMAIL",
+        {prefix}.no_of_uan AS "NO_OF_UAN",
+        {prefix}.pan AS "PAN"
     """
 
 
