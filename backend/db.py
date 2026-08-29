@@ -215,5 +215,7 @@ def create_tables(conn):
 
     # Area Enforcement Officer selected for an inquiry.
     ensure_column(conn, "cases_7a", "aeo", "TEXT")
+    # Jurisdictional Area Enforcement Officer for the establishment.
+    ensure_column(conn, "establishments", "aeo", "TEXT")
 
     conn.commit()

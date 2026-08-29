@@ -83,6 +83,15 @@ class AeoBulkRequest(BaseModel):
     officers: list[AeoRequest]
 
 
+class EstAeoMapping(BaseModel):
+    est_id: str
+    aeo: str
+
+
+class EstAeoImportRequest(BaseModel):
+    mappings: list[EstAeoMapping]
+
+
 class HearingRequest(BaseModel):
     case_no: str
     hearing_date: str
@@ -165,7 +174,8 @@ def est_columns_select(prefix="e"):
         {prefix}.district_name AS "DISTRICT_NAME",
         {prefix}.primary_email AS "PRIMARY_EMAIL",
         {prefix}.no_of_uan AS "NO_OF_UAN",
-        {prefix}.pan AS "PAN"
+        {prefix}.pan AS "PAN",
+        {prefix}.aeo AS "AEO"
     """
 
 
@@ -946,6 +956,50 @@ def add_aeo_bulk(req: AeoBulkRequest):
             inserted += 1
         conn.commit()
         return {"success": True, "inserted": inserted, "skipped": skipped}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.post("/api/establishments/aeo/import")
+def import_establishment_aeo(req: EstAeoImportRequest):
+    """Bulk-assign the jurisdictional AEO to establishments (spreadsheet import).
+
+    Sets establishments.aeo by est_id and makes sure every AEO name used
+    also exists in the /api/aeo directory. Safe to re-run.
+    """
+    conn = get_db_connection()
+    updated, missing, directory_added = 0, 0, 0
+    try:
+        cursor = db.execute(conn, "SELECT lower(name) AS n FROM aeo WHERE designation = '' OR designation IS NULL")
+        known = {r["n"] for r in cursor.fetchall()}
+
+        for mp in req.mappings:
+            est_id = (mp.est_id or "").strip()
+            aeo = (mp.aeo or "").strip()
+            if not est_id or not aeo:
+                continue
+
+            if aeo.lower() not in known:
+                db.execute(conn, "INSERT INTO aeo (name, designation) VALUES (?, '')", (aeo,))
+                known.add(aeo.lower())
+                directory_added += 1
+
+            cur = db.execute(conn, "UPDATE establishments SET aeo = ? WHERE est_id = ?", (aeo, est_id))
+            if cur.rowcount and cur.rowcount > 0:
+                updated += cur.rowcount
+            else:
+                missing += 1
+
+        conn.commit()
+        return {
+            "success": True,
+            "establishments_updated": updated,
+            "est_ids_not_found": missing,
+            "directory_names_added": directory_added,
+        }
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))

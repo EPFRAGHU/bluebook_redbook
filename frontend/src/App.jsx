@@ -706,6 +706,15 @@ export default function App() {
     setOfficers(officers.filter(o => o.id !== id));
   };
 
+  const openInitiateModal = () => {
+    if (!selectedEst) return;
+    setInquiryFormData((f) => ({
+      ...f,
+      aeo: selectedEst.AEO || '',
+    }));
+    setShowModal(true);
+  };
+
   const handleInitiateSubmit = async (e) => {
     e.preventDefault();
     if (!selectedEst) return;
@@ -1766,10 +1775,17 @@ export default function App() {
                 <p className="font-mono text-slate-700">{selectedEst.PRIMARY_EMAIL || 'N/A'}</p>
               </div>
 
+              <div>
+                <span className="text-slate-400 font-semibold uppercase flex items-center gap-1 mb-0.5">
+                  <Shield size={12} /> Area Enforcement Officer
+                </span>
+                <p className="font-semibold text-slate-700">{selectedEst.AEO || 'Not assigned'}</p>
+              </div>
+
               {/* INITIATE INQUIRY BUTTON */}
               <div className="pt-4 border-t border-slate-100 mt-4">
                 <button
-                  onClick={() => setShowModal(true)}
+                  onClick={openInitiateModal}
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-sm flex items-center justify-center gap-2 transition">
                   <Gavel size={16} /> Initiate Inquiry
                 </button>
@@ -1974,10 +1990,18 @@ export default function App() {
                   onChange={(e) => setInquiryFormData({ ...inquiryFormData, aeo: e.target.value })}
                   className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-semibold bg-white text-slate-700">
                   <option value="">-- Choose AEO (optional) --</option>
+                  {inquiryFormData.aeo && !aeoList.some(a => aeoOptionLabel(a) === inquiryFormData.aeo) && (
+                    <option value={inquiryFormData.aeo}>{inquiryFormData.aeo}</option>
+                  )}
                   {aeoList.map((a) => (
                     <option key={a.aeo_id} value={aeoOptionLabel(a)}>{aeoOptionLabel(a)}</option>
                   ))}
                 </select>
+                {selectedEst.AEO && (
+                  <p className="text-[11px] text-emerald-600 mt-1">
+                    Jurisdictional AEO for this establishment: <strong>{selectedEst.AEO}</strong>
+                  </p>
+                )}
                 {aeoList.length === 0 && (
                   <p className="text-[11px] text-slate-400 mt-1">
                     No AEOs yet &mdash; add them via the "Area Enforcement Officers" button on the home page.
