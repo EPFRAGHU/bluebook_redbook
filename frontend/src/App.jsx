@@ -4,8 +4,9 @@ import {
   Users, Mail, Shield, ShieldAlert, Gavel, Calendar, X,
   UserCheck, Plus, Trash2, BookOpen, FileText, Clock,
   CheckCircle2, ListChecks, IndianRupee, BarChart3,
-  Stamp, Landmark, AlertTriangle, LogOut, Pencil
+  Stamp, Landmark, AlertTriangle, LogOut, Pencil, Download
 } from 'lucide-react';
+import { openPrintableReport } from './report';
 
 const API_BASE = "/api";
 
@@ -626,6 +627,183 @@ export default function App() {
     fetchMonthlyCollections(collectionsFy);
   };
 
+  // ---------------------------------------------------------------------------
+  // PDF reports (Blue Book / Red Book / Collections / Monthly Dashboard)
+  // ---------------------------------------------------------------------------
+  const [isExporting, setIsExporting] = useState(false);
+  const REPORT_LIMIT = 100000;
+  const rMoney = (v) => (Number(v) ? `₹${fmtMoney(v)}` : '—');
+  const rMoney0 = (v) => `₹${fmtMoney(v)}`;
+  const rPeriod = (r) => [r.period_from, r.period_to].filter(Boolean).join(' – ') || '—';
+  const rDash = (v) => (v == null || v === '' ? '—' : v);
+  const sumBy = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
+  const nowStamp = () => new Date().toLocaleString('en-IN');
+
+  const exportReport = async (kind) => {
+    setIsExporting(true);
+    try {
+      if (kind === 'bluebook' || kind === 'redbook') {
+        const res = await fetch(`${API_BASE}/${kind}?q=${encodeURIComponent(searchTerm)}&page=1&limit=${REPORT_LIMIT}`);
+        const { data = [] } = await res.json();
+        (kind === 'bluebook' ? buildBlueBookReport : buildRedBookReport)(data);
+      } else if (kind === 'collections') {
+        const url = `${API_BASE}/collections?q=${encodeURIComponent(searchTerm)}&page=1&limit=${REPORT_LIMIT}${collectionMonth ? `&month=${collectionMonth}` : ''}`;
+        const { data = [] } = await (await fetch(url)).json();
+        buildCollectionsReport(data);
+      } else if (kind === 'dashboard') {
+        const months = monthlyData.months || [];
+        const details = await Promise.all(
+          months.map((m) =>
+            fetch(`${API_BASE}/dashboard/monthly/detail?month=${m.ym}`)
+              .then((r) => r.json())
+              .catch(() => ({ added: [], disposed: [] }))
+          )
+        );
+        buildMonthlyReport(months, details);
+      }
+    } catch (e) {
+      console.error('Report error:', e);
+      alert('Could not generate the report. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const buildBlueBookReport = (rows) => {
+    openPrintableReport({
+      title: 'Blue Book — Register of Inquiries',
+      subtitle: 'Cases initiated under Section 7A / 7B / 14B / 7Q',
+      meta: [
+        { label: 'Filter', value: searchTerm.trim() || 'All records' },
+        { label: 'Total cases', value: String(rows.length) },
+        { label: 'Generated', value: nowStamp() },
+      ],
+      sections: [{
+        head: ['Sr', 'Case No', 'Establishment', 'Est Code', 'Sec', 'Assessing Officer', 'AEO', 'Period', 'Initiated', 'Hearing #', 'Next Hearing', 'Status', 'Amount Received'],
+        aligns: ['r', 'l', 'l', 'l', 'c', 'l', 'l', 'l', 'c', 'c', 'c', 'c', 'r'],
+        rows: rows.map((c, i) => [
+          i + 1, c.case_no, c.EST_NAME || 'N/A', c.est_id, c.inquiry_section || '7A',
+          rDash(c.assessing_officer), rowAeo(c), rPeriod(c), rDash(c.initiation_date),
+          c.hearing_count || 1, rDash(c.current_ndh), rDash(c.status), rMoney(c.amount_received),
+        ]),
+        total: ['', '', '', '', '', '', '', '', '', '', '', 'TOTAL', rMoney0(sumBy(rows, (r) => r.amount_received))],
+      }],
+    });
+  };
+
+  const buildRedBookReport = (rows) => {
+    openPrintableReport({
+      title: 'Red Book — Defaulters & Recovery Register',
+      subtitle: 'Assessment orders and recovery position',
+      meta: [
+        { label: 'Filter', value: searchTerm.trim() || 'All records' },
+        { label: 'Total defaulters', value: String(rows.length) },
+        { label: 'Generated', value: nowStamp() },
+      ],
+      sections: [{
+        head: ['Sr', 'Case No', 'Establishment', 'Est Code', 'Sec', 'Officer', 'AEO', 'Period', 'Order Date',
+          'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Assessed', 'Total Collected', 'Balance'],
+        aligns: ['r', 'l', 'l', 'l', 'c', 'l', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'],
+        rows: rows.map((r, i) => [
+          i + 1, r.case_no, r.EST_NAME || 'N/A', r.est_id, r.inquiry_section || '7A',
+          rDash(r.assessing_officer), rowAeo(r), rPeriod(r), rDash(r.order_date),
+          rMoney(r.account1), rMoney(r.account2), rMoney(r.account10), rMoney(r.account21), rMoney(r.account22),
+          rMoney(r.total_assessed), rMoney(r.total_collected),
+          rMoney((r.total_assessed || 0) - (r.total_collected || 0)),
+        ]),
+        total: ['', '', '', '', '', '', '', '', 'TOTAL',
+          rMoney0(sumBy(rows, (r) => r.account1)), rMoney0(sumBy(rows, (r) => r.account2)),
+          rMoney0(sumBy(rows, (r) => r.account10)), rMoney0(sumBy(rows, (r) => r.account21)),
+          rMoney0(sumBy(rows, (r) => r.account22)), rMoney0(sumBy(rows, (r) => r.total_assessed)),
+          rMoney0(sumBy(rows, (r) => r.total_collected)),
+          rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))],
+      }],
+    });
+  };
+
+  const buildCollectionsReport = (rows) => {
+    const monthLabel = collectionMonth
+      ? (monthlyCollections.months.find((m) => m.ym === collectionMonth)?.month || collectionMonth)
+      : 'All months';
+    openPrintableReport({
+      title: 'Collection Register',
+      subtitle: 'Payments received against Red Book cases',
+      meta: [
+        { label: 'Period', value: monthLabel },
+        { label: 'Filter', value: searchTerm.trim() || 'All records' },
+        { label: 'Entries', value: String(rows.length) },
+        { label: 'Generated', value: nowStamp() },
+      ],
+      sections: [{
+        head: ['Sr', 'Payment Date', 'Est Code', 'Establishment', 'AEO', 'Sec', 'Officer', 'Period', 'Order Date',
+          'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Collected', 'Cheque / DD No.', 'Mode'],
+        aligns: ['r', 'c', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'l', 'c'],
+        rows: rows.map((c, i) => [
+          i + 1, rDash(c.collection_date), c.est_id, c.EST_NAME || 'N/A', rowAeo(c),
+          c.inquiry_section || '7A', rDash(c.assessing_officer), rPeriod(c), rDash(c.order_date),
+          rMoney(c.account1), rMoney(c.account2), rMoney(c.account10), rMoney(c.account21), rMoney(c.account22),
+          rMoney(c.total_collected), rDash(c.instrument_no), c.mode || 'CHEQUE',
+        ]),
+        total: ['', '', '', '', '', '', '', '', 'TOTAL',
+          rMoney0(sumBy(rows, (r) => r.account1)), rMoney0(sumBy(rows, (r) => r.account2)),
+          rMoney0(sumBy(rows, (r) => r.account10)), rMoney0(sumBy(rows, (r) => r.account21)),
+          rMoney0(sumBy(rows, (r) => r.account22)), rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''],
+      }],
+    });
+  };
+
+  const buildMonthlyReport = (months, details) => {
+    const fy = monthlyData.fy || `${fyYear}-${String(fyYear + 1).slice(-2)}`;
+    const addedRows = [];
+    const disposedRows = [];
+    months.forEach((m, idx) => {
+      const d = details[idx] || { added: [], disposed: [] };
+      (d.added || []).forEach((c) => addedRows.push([
+        addedRows.length + 1, m.month, c.est_id, c.EST_NAME || 'N/A', rowAeo(c), c.case_no,
+        c.inquiry_section || '7A', rDash(c.assessing_officer), rPeriod(c), rDash(c.initiation_date), rDash(c.status),
+      ]));
+      (d.disposed || []).forEach((r) => disposedRows.push([
+        disposedRows.length + 1, m.month, r.est_id, r.EST_NAME || 'N/A', rowAeo(r), r.case_no,
+        r.inquiry_section || '7A', rDash(r.assessing_officer), rPeriod(r), rDash(r.order_date), rMoney0(r.total_assessed),
+      ]));
+    });
+    const grandAssessed = months.reduce(
+      (s, m, idx) => s + sumBy((details[idx] || {}).disposed || [], (r) => r.total_assessed), 0);
+
+    openPrintableReport({
+      title: 'Monthly Inquiry Register',
+      subtitle: `Financial Year ${fy} (April – March)`,
+      meta: [
+        { label: 'Financial year', value: fy },
+        { label: 'Generated', value: nowStamp() },
+      ],
+      sections: [
+        {
+          caption: 'Running Balance of Inquiries',
+          head: ['Month', 'Opening', 'Added', 'Disposed', 'Closing'],
+          aligns: ['l', 'r', 'r', 'r', 'r'],
+          rows: months.map((m) => [m.month, m.opening, `+${m.added}`, `-${m.disposed}`, m.closing]),
+          total: ['FY Total', months[0] ? months[0].opening : 0,
+            `+${sumBy(months, (m) => m.added)}`, `-${sumBy(months, (m) => m.disposed)}`,
+            months.length ? months[months.length - 1].closing : 0],
+        },
+        {
+          caption: `Inquiries Added During FY ${fy}`,
+          head: ['Sr', 'Month', 'Est Code', 'Establishment', 'AEO', 'Case No', 'Sec', 'Officer', 'Period', 'Initiated', 'Status'],
+          aligns: ['r', 'l', 'l', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'c'],
+          rows: addedRows,
+        },
+        {
+          caption: `Inquiries Disposed (Entered Red Book) During FY ${fy}`,
+          head: ['Sr', 'Month', 'Est Code', 'Establishment', 'AEO', 'Case No', 'Sec', 'Officer', 'Period', 'Order Date', 'Total Assessed'],
+          aligns: ['r', 'l', 'l', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'r'],
+          rows: disposedRows,
+          total: ['', '', '', '', '', '', '', '', '', 'GRAND TOTAL', rMoney0(grandAssessed)],
+        },
+      ],
+    });
+  };
+
   // Update a tracking flag (8F / NIR / Bank A/c Attached) on the backend, then refresh the row in place.
   const updateCaseTracking = async (c, updates, cb) => {
     try {
@@ -1011,8 +1189,15 @@ export default function App() {
               </p>
             </div>
 
-            {/* FINANCIAL YEAR SWITCHER */}
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => exportReport('dashboard')}
+                disabled={isExporting || !(monthlyData.months && monthlyData.months.length)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition disabled:opacity-50">
+                <Download size={14} /> {isExporting ? 'Preparing…' : 'Save as PDF'}
+              </button>
+
+              {/* FINANCIAL YEAR SWITCHER */}
               <button
                 onClick={() => setFyYear(fyYear - 1)}
                 className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100">
@@ -1226,7 +1411,13 @@ export default function App() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => exportReport('collections')}
+                disabled={isExporting}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition disabled:opacity-50">
+                <Download size={14} /> {isExporting ? 'Preparing…' : 'Save as PDF'}
+              </button>
               <select
                 value={collectionMonth}
                 onChange={(e) => setCollectionMonth(e.target.value)}
@@ -1389,16 +1580,26 @@ export default function App() {
               {activeTab === 'hearings_today' && "Today's Scheduled Hearings"}
             </h2>
 
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-              <span>Display per page:</span>
-              {[10, 20, 50, 100].map((l) => (
+            <div className="flex flex-wrap items-center gap-3">
+              {(activeTab === 'bluebook' || activeTab === 'redbook') && (
                 <button
-                  key={l}
-                  onClick={() => { setLimit(l); setPage(1); }}
-                  className={`px-2.5 py-1 rounded-lg border transition ${limit === l ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}>
-                  {l}
+                  onClick={() => exportReport(activeTab)}
+                  disabled={isExporting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition disabled:opacity-50">
+                  <Download size={14} /> {isExporting ? 'Preparing…' : 'Save as PDF'}
                 </button>
-              ))}
+              )}
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                <span>Display per page:</span>
+                {[10, 20, 50, 100].map((l) => (
+                  <button
+                    key={l}
+                    onClick={() => { setLimit(l); setPage(1); }}
+                    className={`px-2.5 py-1 rounded-lg border transition ${limit === l ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
