@@ -705,6 +705,7 @@ export default function App() {
       summaryRow: (key, rows, i) => [i + 1, key, rows.length, rMoney0(sumBy(rows, (r) => r.total_collected))],
       summaryTotal: (rows) => ['', 'GRAND TOTAL', rows.length, rMoney0(sumBy(rows, (r) => r.total_collected))],
     },
+    dashboard: { title: 'Monthly Inquiry Register' },
   };
 
   const groupKeyOf = (groupBy, r) => {
@@ -789,30 +790,12 @@ export default function App() {
     });
   };
 
-  const exportReport = async (kind) => {
-    // Monthly Dashboard keeps its own dedicated report.
-    if (kind !== 'dashboard') return;
-    try {
-      const months = monthlyData.months || [];
-      const details = await Promise.all(
-        months.map((m) =>
-          fetch(`${API_BASE}/dashboard/monthly/detail?month=${m.ym}`)
-            .then((r) => r.json())
-            .catch(() => ({ added: [], disposed: [] }))
-        )
-      );
-      buildMonthlyReport(months, details);
-    } catch (e) {
-      console.error('Report error:', e);
-      alert('Could not generate the report. Please try again.');
-    }
-  };
-
-  // Export dialog (Blue Book / Red Book / Collections / Active / Hearings)
+  // Export dialog (Blue Book / Red Book / Collections / Active / Hearings / Monthly Dashboard)
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportKind, setExportKind] = useState(null);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportData, setExportData] = useState([]);
+  const [exportMonths, setExportMonths] = useState([]);
   const [exportGroupBy, setExportGroupBy] = useState('none'); // none | officer | aeo
   const [exportScope, setExportScope] = useState('all');      // all | one
   const [exportPick, setExportPick] = useState('');
@@ -823,15 +806,33 @@ export default function App() {
     setExportScope('all');
     setExportPick('');
     setExportData([]);
+    setExportMonths([]);
     setShowExportModal(true);
     setExportLoading(true);
     try {
-      const q = `q=${encodeURIComponent(searchTerm)}&page=1&limit=${REPORT_LIMIT}`;
-      const url = kind === 'collections'
-        ? `${API_BASE}/collections?${q}${collectionMonth ? `&month=${collectionMonth}` : ''}`
-        : `${API_BASE}/${REPORT_DEFS[kind].endpoint}?${q}`;
-      const { data = [] } = await (await fetch(url)).json();
-      setExportData(data);
+      if (kind === 'dashboard') {
+        const months = monthlyData.months || [];
+        const details = await Promise.all(months.map((m) =>
+          fetch(`${API_BASE}/dashboard/monthly/detail?month=${m.ym}`)
+            .then((r) => r.json())
+            .catch(() => ({ added: [], disposed: [] }))
+        ));
+        const rows = [];
+        months.forEach((m, idx) => {
+          const d = details[idx] || {};
+          (d.added || []).forEach((c) => rows.push({ ...c, _type: 'Added', _month: m.month }));
+          (d.disposed || []).forEach((c) => rows.push({ ...c, _type: 'Disposed', _month: m.month }));
+        });
+        setExportMonths(months);
+        setExportData(rows);
+      } else {
+        const q = `q=${encodeURIComponent(searchTerm)}&page=1&limit=${REPORT_LIMIT}`;
+        const url = kind === 'collections'
+          ? `${API_BASE}/collections?${q}${collectionMonth ? `&month=${collectionMonth}` : ''}`
+          : `${API_BASE}/${REPORT_DEFS[kind].endpoint}?${q}`;
+        const { data = [] } = await (await fetch(url)).json();
+        setExportData(data);
+      }
     } catch (e) {
       console.error('Export fetch error:', e);
       alert('Could not load the data for this report.');
@@ -847,66 +848,123 @@ export default function App() {
     .sort((a, b) => a.localeCompare(b));
 
   const runExport = () => {
-    const def = REPORT_DEFS[exportKind];
-    const extraMeta = exportExtraMeta(exportKind);
-    if (exportGroupBy === 'none') {
-      buildFlatReport(def, exportData, extraMeta);
+    const onlyKey = exportScope === 'one' && exportPick ? exportPick : null;
+    if (exportKind === 'dashboard') {
+      if (exportGroupBy === 'none') buildMonthlyReport(exportMonths, exportData);
+      else buildMonthlyGroupedReport(exportMonths, exportData, exportGroupBy, onlyKey);
     } else {
-      const onlyKey = exportScope === 'one' && exportPick ? exportPick : null;
-      buildGroupedReport(def, exportData, exportGroupBy, onlyKey, extraMeta);
+      const def = REPORT_DEFS[exportKind];
+      const extraMeta = exportExtraMeta(exportKind);
+      if (exportGroupBy === 'none') buildFlatReport(def, exportData, extraMeta);
+      else buildGroupedReport(def, exportData, exportGroupBy, onlyKey, extraMeta);
     }
     setShowExportModal(false);
   };
 
-  const buildMonthlyReport = (months, details) => {
-    const fy = monthlyData.fy || `${fyYear}-${String(fyYear + 1).slice(-2)}`;
-    const addedRows = [];
-    const disposedRows = [];
-    months.forEach((m, idx) => {
-      const d = details[idx] || { added: [], disposed: [] };
-      (d.added || []).forEach((c) => addedRows.push([
-        addedRows.length + 1, m.month, c.est_id, c.EST_NAME || 'N/A', rowAeo(c), c.case_no,
-        c.inquiry_section || '7A', rDash(c.assessing_officer), rPeriod(c), rDash(c.initiation_date), rDash(c.status),
-      ]));
-      (d.disposed || []).forEach((r) => disposedRows.push([
-        disposedRows.length + 1, m.month, r.est_id, r.EST_NAME || 'N/A', rowAeo(r), r.case_no,
-        r.inquiry_section || '7A', rDash(r.assessing_officer), rPeriod(r), rDash(r.order_date), rMoney0(r.total_assessed),
-      ]));
-    });
-    const grandAssessed = months.reduce(
-      (s, m, idx) => s + sumBy((details[idx] || {}).disposed || [], (r) => r.total_assessed), 0);
+  const fyLabel = () => monthlyData.fy || `${fyYear}-${String(fyYear + 1).slice(-2)}`;
 
+  const runningBalanceSection = (months) => ({
+    caption: 'Running Balance of Inquiries',
+    head: ['Month', 'Opening', 'Added', 'Disposed', 'Closing'],
+    aligns: ['l', 'r', 'r', 'r', 'r'],
+    rows: months.map((m) => [m.month, m.opening, `+${m.added}`, `-${m.disposed}`, m.closing]),
+    total: ['FY Total', months[0] ? months[0].opening : 0,
+      `+${sumBy(months, (m) => m.added)}`, `-${sumBy(months, (m) => m.disposed)}`,
+      months.length ? months[months.length - 1].closing : 0],
+  });
+
+  const buildMonthlyReport = (months, rows) => {
+    const fy = fyLabel();
+    const added = rows.filter((r) => r._type === 'Added');
+    const disposed = rows.filter((r) => r._type === 'Disposed');
     openPrintableReport({
       title: 'Monthly Inquiry Register',
       subtitle: `Financial Year ${fy} (April – March)`,
       meta: [
         { label: 'Financial year', value: fy },
+        { label: 'Added / Disposed', value: `${added.length} / ${disposed.length}` },
         { label: 'Generated', value: nowStamp() },
       ],
       sections: [
-        {
-          caption: 'Running Balance of Inquiries',
-          head: ['Month', 'Opening', 'Added', 'Disposed', 'Closing'],
-          aligns: ['l', 'r', 'r', 'r', 'r'],
-          rows: months.map((m) => [m.month, m.opening, `+${m.added}`, `-${m.disposed}`, m.closing]),
-          total: ['FY Total', months[0] ? months[0].opening : 0,
-            `+${sumBy(months, (m) => m.added)}`, `-${sumBy(months, (m) => m.disposed)}`,
-            months.length ? months[months.length - 1].closing : 0],
-        },
+        runningBalanceSection(months),
         {
           caption: `Inquiries Added During FY ${fy}`,
           head: ['Sr', 'Month', 'Est Code', 'Establishment', 'AEO', 'Case No', 'Sec', 'Officer', 'Period', 'Initiated', 'Status'],
           aligns: ['r', 'l', 'l', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'c'],
-          rows: addedRows,
+          rows: added.map((c, i) => [
+            i + 1, c._month, c.est_id, c.EST_NAME || 'N/A', rowAeo(c), c.case_no,
+            c.inquiry_section || '7A', rDash(c.assessing_officer), rPeriod(c), rDash(c.initiation_date), rDash(c.status),
+          ]),
         },
         {
           caption: `Inquiries Disposed (Entered Red Book) During FY ${fy}`,
           head: ['Sr', 'Month', 'Est Code', 'Establishment', 'AEO', 'Case No', 'Sec', 'Officer', 'Period', 'Order Date', 'Total Assessed'],
           aligns: ['r', 'l', 'l', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'r'],
-          rows: disposedRows,
-          total: ['', '', '', '', '', '', '', '', '', 'GRAND TOTAL', rMoney0(grandAssessed)],
+          rows: disposed.map((r, i) => [
+            i + 1, r._month, r.est_id, r.EST_NAME || 'N/A', rowAeo(r), r.case_no,
+            r.inquiry_section || '7A', rDash(r.assessing_officer), rPeriod(r), rDash(r.order_date), rMoney0(r.total_assessed),
+          ]),
+          total: ['', '', '', '', '', '', '', '', '', 'GRAND TOTAL', rMoney0(sumBy(disposed, (r) => r.total_assessed))],
         },
       ],
+    });
+  };
+
+  const buildMonthlyGroupedReport = (months, allRows, groupBy, onlyKey) => {
+    const fy = fyLabel();
+    const groupLabel = groupBy === 'aeo' ? 'Area Enforcement Officer' : 'Inquiry Officer';
+    const cnt = (rs, t) => rs.filter((r) => r._type === t).length;
+    const assessed = (rs) => sumBy(rs.filter((r) => r._type === 'Disposed'), (r) => r.total_assessed);
+
+    const groups = new Map();
+    allRows.forEach((r) => {
+      const k = groupKeyOf(groupBy, r);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    });
+    let keys = sortKeys(groups.keys());
+    if (onlyKey) keys = keys.filter((k) => k === onlyKey);
+    const usedRows = keys.reduce((acc, k) => acc.concat(groups.get(k) || []), []);
+
+    const sections = [runningBalanceSection(months)];
+
+    if (!onlyKey && keys.length > 1) {
+      sections.push({
+        caption: `Summary — by ${groupLabel} (A–Z)`,
+        head: ['Sr', groupLabel, 'Added', 'Disposed', 'Total Assessed'],
+        aligns: ['r', 'l', 'r', 'r', 'r'],
+        rows: keys.map((k, i) => [i + 1, k, cnt(groups.get(k), 'Added'), cnt(groups.get(k), 'Disposed'), rMoney0(assessed(groups.get(k)))]),
+        total: ['', 'GRAND TOTAL', cnt(usedRows, 'Added'), cnt(usedRows, 'Disposed'), rMoney0(assessed(usedRows))],
+      });
+    }
+
+    keys.forEach((k) => {
+      const grp = groups.get(k) || [];
+      sections.push({
+        caption: `${groupLabel}: ${k}   (${cnt(grp, 'Added')} added, ${cnt(grp, 'Disposed')} disposed)`,
+        pageBreak: true,
+        head: ['Sr', 'Month', 'Type', 'Est Code', 'Establishment', 'AEO', 'Case No', 'Sec', 'Period', 'Date', 'Total Assessed'],
+        aligns: ['r', 'l', 'c', 'l', 'l', 'l', 'l', 'c', 'l', 'c', 'r'],
+        rows: grp.map((r, i) => [
+          i + 1, r._month, r._type, r.est_id, r.EST_NAME || 'N/A', rowAeo(r), r.case_no,
+          r.inquiry_section || '7A', rPeriod(r),
+          r._type === 'Disposed' ? rDash(r.order_date) : rDash(r.initiation_date),
+          r._type === 'Disposed' ? rMoney0(r.total_assessed) : '—',
+        ]),
+        total: ['', '', '', '', '', '', '', '', '', 'TOTAL', rMoney0(assessed(grp))],
+      });
+    });
+
+    openPrintableReport({
+      title: onlyKey ? `Monthly Inquiry Register — ${onlyKey}` : `Monthly Inquiry Register — by ${groupLabel}`,
+      subtitle: `Financial Year ${fy} (April – March)`,
+      meta: [
+        { label: 'Financial year', value: fy },
+        { label: 'Grouped by', value: onlyKey ? `${groupLabel} (single)` : `${groupLabel} (A–Z)` },
+        { label: 'Added / Disposed', value: `${cnt(usedRows, 'Added')} / ${cnt(usedRows, 'Disposed')}` },
+        { label: 'Generated', value: nowStamp() },
+      ],
+      sections,
     });
   };
 
@@ -1297,7 +1355,7 @@ export default function App() {
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => exportReport('dashboard')}
+                onClick={() => openExportDialog('dashboard')}
                 disabled={!(monthlyData.months && monthlyData.months.length)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition disabled:opacity-50">
                 <Download size={14} /> Save as PDF
@@ -2275,14 +2333,16 @@ export default function App() {
             ) : (
               <div className="space-y-4 text-sm">
                 <p className="text-xs text-slate-500">
-                  {exportData.length} record{exportData.length === 1 ? '' : 's'} match the current filter.
+                  {exportKind === 'dashboard'
+                    ? `${exportData.filter((r) => r._type === 'Added').length} added / ${exportData.filter((r) => r._type === 'Disposed').length} disposed in FY ${monthlyData.fy || '…'}.`
+                    : `${exportData.length} record${exportData.length === 1 ? '' : 's'} match the current filter.`}
                 </p>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">Report type</label>
                   <div className="space-y-1.5">
                     {[
-                      { v: 'none', label: 'All records — single PDF' },
+                      { v: 'none', label: exportKind === 'dashboard' ? 'Full register — single PDF' : 'All records — single PDF' },
                       { v: 'officer', label: 'By Inquiry Officer' },
                       { v: 'aeo', label: 'By Area Enforcement Officer' },
                     ].map((o) => (
@@ -2341,7 +2401,12 @@ export default function App() {
                   </button>
                   <button
                     onClick={runExport}
-                    disabled={exportData.length === 0 || (exportGroupBy !== 'none' && exportScope === 'one' && !exportPick)}
+                    disabled={
+                      (exportKind === 'dashboard'
+                        ? (exportGroupBy !== 'none' && exportData.length === 0)
+                        : exportData.length === 0)
+                      || (exportGroupBy !== 'none' && exportScope === 'one' && !exportPick)
+                    }
                     className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-sm shadow-sm disabled:opacity-50">
                     Generate PDF
                   </button>
