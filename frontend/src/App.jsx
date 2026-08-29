@@ -290,6 +290,10 @@ export default function App() {
 
   const aeoOptionLabel = (a) => (a.designation ? `${a.name} (${a.designation})` : a.name);
 
+  // AEO to show in a list row: the case's chosen AEO, else the
+  // establishment's jurisdictional AEO.
+  const rowAeo = (row) => (row && (row.aeo || row.AEO)) || '—';
+
   const handleAddAeo = async (e) => {
     e.preventDefault();
     if (!newAeo.name.trim()) return;
@@ -1112,11 +1116,12 @@ export default function App() {
                 </h3>
                 {monthlyDetail.added.length > 0 ? (
                   <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                    <table className="w-full text-left border-collapse min-w-[950px]">
+                    <table className="w-full text-left border-collapse min-w-[1050px]">
                       <thead className="bg-slate-100 text-xs font-bold text-slate-600 uppercase">
                         <tr>
                           <th className="p-3 text-center">Est Code</th>
                           <th className="p-3 text-center">Establishment</th>
+                          <th className="p-3 text-center">AEO</th>
                           <th className="p-3 text-center">Case No</th>
                           <th className="p-3 text-center">Section</th>
                           <th className="p-3 text-center">Officer</th>
@@ -1130,6 +1135,7 @@ export default function App() {
                           <tr key={c.case_no} className="hover:bg-emerald-50/40">
                             <td className="p-3 font-mono font-bold text-violet-700 whitespace-nowrap">{c.est_id}</td>
                             <td className="p-3 font-semibold text-slate-800">{c.EST_NAME || 'N/A'}</td>
+                            <td className="p-3 text-slate-600 whitespace-nowrap">{rowAeo(c)}</td>
                             <td className="p-3 font-mono text-slate-600 whitespace-nowrap">{c.case_no}</td>
                             <td className="p-3 text-center"><span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{c.inquiry_section || '7A'}</span></td>
                             <td className="p-3 text-slate-600">{c.assessing_officer}</td>
@@ -1157,11 +1163,12 @@ export default function App() {
                 </h3>
                 {monthlyDetail.disposed.length > 0 ? (
                   <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                    <table className="w-full text-left border-collapse min-w-[1000px]">
+                    <table className="w-full text-left border-collapse min-w-[1100px]">
                       <thead className="bg-slate-100 text-xs font-bold text-slate-600 uppercase">
                         <tr>
                           <th className="p-3 text-center">Est Code</th>
                           <th className="p-3 text-center">Establishment</th>
+                          <th className="p-3 text-center">AEO</th>
                           <th className="p-3 text-center">Case No</th>
                           <th className="p-3 text-center">Section</th>
                           <th className="p-3 text-center">Officer</th>
@@ -1175,6 +1182,7 @@ export default function App() {
                           <tr key={r.case_no} className="hover:bg-rose-50/40">
                             <td className="p-3 font-mono font-bold text-violet-700 whitespace-nowrap">{r.est_id}</td>
                             <td className="p-3 font-semibold text-slate-800">{r.EST_NAME || 'N/A'}</td>
+                            <td className="p-3 text-slate-600 whitespace-nowrap">{rowAeo(r)}</td>
                             <td className="p-3 font-mono text-slate-600 whitespace-nowrap">{r.case_no}</td>
                             <td className="p-3 text-center"><span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{r.inquiry_section || '7A'}</span></td>
                             <td className="p-3 text-slate-600">{r.assessing_officer}</td>
@@ -1186,7 +1194,7 @@ export default function App() {
                       </tbody>
                       <tfoot className="bg-slate-50 text-xs font-bold text-slate-700">
                         <tr>
-                          <td className="p-3" colSpan={7}>Total Assessed — {monthlyDetailLabel}</td>
+                          <td className="p-3" colSpan={8}>Total Assessed — {monthlyDetailLabel}</td>
                           <td className="p-3 text-right font-mono text-rose-700">
                             ₹{fmtMoney(monthlyDetail.disposed.reduce((s, r) => s + (r.total_assessed || 0), 0))}
                           </td>
@@ -1287,11 +1295,12 @@ export default function App() {
             <div className="text-center py-16 text-slate-400 font-medium">Loading collections...</div>
           ) : collectionsData.data.length > 0 ? (
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
-              <table className="w-full text-left border-collapse min-w-[1150px]">
+              <table className="w-full text-left border-collapse min-w-[1280px]">
                 <thead className="bg-slate-100 text-base font-bold text-slate-600 uppercase">
                   <tr>
                     <th className="p-3 text-center">Est Code</th>
                     <th className="p-3 text-center">Establishment</th>
+                    <th className="p-3 text-center">AEO</th>
                     <th className="p-3 text-center">Section</th>
                     <th className="p-3 text-center">Officer</th>
                     <th className="p-3 text-center">Period</th>
@@ -1313,6 +1322,7 @@ export default function App() {
                     <tr key={col.collection_id} className="hover:bg-teal-50/30">
                       <td className="p-3 font-mono font-bold text-teal-700 whitespace-nowrap">{col.est_id}</td>
                       <td className="p-3 font-semibold text-slate-800">{col.EST_NAME || 'N/A'}</td>
+                      <td className="p-3 text-slate-600 whitespace-nowrap">{rowAeo(col)}</td>
                       <td className="p-3"><span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{col.inquiry_section || '7A'}</span></td>
                       <td className="p-3 text-slate-600">{col.assessing_officer}</td>
                       <td className="p-3 text-slate-500">{col.period_from} to {col.period_to}</td>
@@ -1416,7 +1426,7 @@ export default function App() {
           ) : searchResults.length > 0 ? (
             <>
               <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-[550px] overflow-y-auto">
-                <table className={`w-full text-left border-collapse ${activeTab === 'redbook' ? 'min-w-[1800px]' : isCaseTab ? 'min-w-[1250px]' : 'min-w-[800px]'}`}>
+                <table className={`w-full text-left border-collapse ${activeTab === 'redbook' ? 'min-w-[1950px]' : isCaseTab ? 'min-w-[1350px]' : 'min-w-[950px]'}`}>
                   {/* ---- CASE-BASED TABS: bluebook / active_7a / hearings_today ---- */}
                   {isCaseTab ? (
                     <>
@@ -1451,7 +1461,7 @@ export default function App() {
                               <span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{c.inquiry_section || '7A'}</span>
                             </td>
                             <td className="p-3 text-slate-600">{c.assessing_officer}</td>
-                            <td className="p-3 text-slate-600">{c.aeo || '—'}</td>
+                            <td className="p-3 text-slate-600 whitespace-nowrap">{rowAeo(c)}</td>
                             <td className="p-3 text-slate-500">{c.period_from} to {c.period_to}</td>
                             <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{c.initiation_date || 'N/A'}</td>
                             <td className="p-3 text-center font-bold text-slate-700">{c.hearing_count || 1}</td>
@@ -1530,6 +1540,7 @@ export default function App() {
                           <th className="p-3 text-center border-x border-slate-300 border-l-2 border-slate-500">Case / Est</th>
                           <th className="p-3 text-center border-x border-slate-300">Section</th>
                           <th className="p-3 text-center border-x border-slate-300">Officer</th>
+                          <th className="p-3 text-center border-x border-slate-300">AEO</th>
                           <th className="p-3 text-center border-x border-slate-300">Period</th>
                           <th className="p-3 text-center border-x border-slate-300 border-r-2 border-slate-500">Order Date</th>
                           <th className="p-3 text-center border-x border-slate-300 border-l-2 border-slate-500" colSpan={6}>Total Dues</th>
@@ -1540,6 +1551,7 @@ export default function App() {
                         </tr>
                         <tr className="bg-slate-50">
                           <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500 border-l-2 border-slate-500"></th>
+                          <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500"></th>
                           <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500"></th>
                           <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500"></th>
                           <th className="p-2 text-center border-x border-slate-300 border-b-2 border-slate-500"></th>
@@ -1585,6 +1597,7 @@ export default function App() {
                               <span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{r.inquiry_section || '7A'}</span>
                             </td>
                             <td className="p-3 text-slate-600 border-x border-slate-200">{r.assessing_officer}</td>
+                            <td className="p-3 text-slate-600 border-x border-slate-200 whitespace-nowrap">{rowAeo(r)}</td>
                             <td className="p-3 text-slate-500 border-x border-slate-200">{r.period_from} to {r.period_to}</td>
                             <td className="p-3 font-semibold text-slate-700 border-x border-slate-200 border-r-2 border-slate-500">{r.order_date}</td>
                             <td className="p-3 text-right font-mono border-x border-slate-200">{r.account1 && `₹${fmtMoney(r.account1)}`}</td>
@@ -1636,7 +1649,7 @@ export default function App() {
                       </tbody>
                       <tfoot className="sticky bottom-0 bg-slate-100 text-xs font-bold uppercase text-slate-800 border-t-2 border-slate-400">
                         <tr className="bg-slate-200/80">
-                          <td className="p-3 font-black text-slate-800 text-sm border-x border-slate-300 border-l-2 border-slate-500" colSpan={5}>GRAND TOTAL</td>
+                          <td className="p-3 font-black text-slate-800 text-sm border-x border-slate-300 border-l-2 border-slate-500" colSpan={6}>GRAND TOTAL</td>
                           <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.account1 || 0), 0))}</td>
                           <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.account2 || 0), 0))}</td>
                           <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.account10 || 0), 0))}</td>
@@ -1667,6 +1680,7 @@ export default function App() {
                         <tr>
                           <th className="p-3 text-center">Est Code</th>
                           <th className="p-3 text-center">Establishment Name</th>
+                          <th className="p-3 text-center">AEO</th>
                           <th className="p-3 text-center">Address 1 & 2</th>
                           <th className="p-3 text-center">City</th>
                           <th className="p-3 text-center">No of UAN</th>
@@ -1682,6 +1696,7 @@ export default function App() {
                             className={`cursor-pointer transition hover:bg-blue-50/60 ${selectedEst?.EST_ID === est.EST_ID ? 'bg-blue-50 border-l-4 border-blue-600' : ''}`}>
                             <td className="p-3 font-mono font-bold text-blue-600 whitespace-nowrap">{est.EST_ID}</td>
                             <td className="p-3 font-semibold text-slate-800">{est.EST_NAME}</td>
+                            <td className="p-3 text-slate-600 whitespace-nowrap">{est.AEO || '—'}</td>
                             <td className="p-3 text-slate-600 max-w-[180px] truncate">
                               {est.ADDRESS1} {est.ADDRESS2}
                             </td>
@@ -2103,7 +2118,7 @@ export default function App() {
               </div>
               <div className="bg-slate-50 border border-slate-100 rounded-lg p-2 col-span-3">
                 <span className="text-slate-400 font-semibold uppercase block">Area Enforcement Officer</span>
-                <span className="font-semibold text-slate-700">{selectedCase.aeo || '—'}</span>
+                <span className="font-semibold text-slate-700">{rowAeo(selectedCase)}</span>
               </div>
             </div>
 
