@@ -799,6 +799,7 @@ def get_monthly_dashboard(year: Optional[int] = None):
         closing = opening + added - disposed
         months.append({
             "month": f"{calendar.month_abbr[m]} {y}",
+            "ym": f"{y:04d}-{m:02d}",
             "opening": opening,
             "added": added,
             "disposed": disposed,
@@ -810,6 +811,48 @@ def get_monthly_dashboard(year: Optional[int] = None):
         "fy": f"{fy}-{str(fy + 1)[-2:]}",
         "months": months,
     }
+
+
+@app.get("/api/dashboard/monthly/detail")
+def get_monthly_dashboard_detail(month: str = Query(..., description="Month as YYYY-MM")):
+    """Establishment-wise breakdown for a single month:
+      * added    - inquiries initiated in the month (from cases_7a.created_at)
+      * disposed - inquiries finalised in the month (entered into the Red Book)
+    """
+    conn = get_db_connection()
+    try:
+        cursor = db.execute(conn, f"""
+            SELECT
+                c.case_no, c.est_id, c.inquiry_section, c.assessing_officer,
+                c.period_from, c.period_to, c.status,
+                substr(c.created_at, 1, 10) AS initiation_date,
+                {est_columns_select("e")}
+            FROM cases_7a c
+            LEFT JOIN establishments e ON c.est_id = e.est_id
+            WHERE substr(c.created_at, 1, 7) = ?
+            ORDER BY c.created_at ASC, c.case_no ASC
+        """, (month,))
+        added = [dict(row) for row in cursor.fetchall()]
+
+        cursor = db.execute(conn, f"""
+            SELECT
+                rb.case_no, rb.est_id, rb.order_date, rb.total_assessed,
+                rb.account1, rb.account2, rb.account10, rb.account21, rb.account22,
+                c.inquiry_section, c.assessing_officer, c.period_from, c.period_to,
+                {est_columns_select("e")}
+            FROM redbook rb
+            LEFT JOIN establishments e ON rb.est_id = e.est_id
+            LEFT JOIN cases_7a c ON rb.case_no = c.case_no
+            WHERE substr(rb.order_date, 1, 7) = ?
+            ORDER BY rb.order_date ASC, rb.case_no ASC
+        """, (month,))
+        disposed = [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        print("Monthly detail error:", e)
+        added, disposed = [], []
+
+    conn.close()
+    return {"month": month, "added": added, "disposed": disposed}
 
 
 @app.post("/api/7a/initiate")

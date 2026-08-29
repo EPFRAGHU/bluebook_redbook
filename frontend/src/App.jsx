@@ -72,6 +72,10 @@ export default function App() {
     const now = new Date();
     return now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
   });
+  // Month-wise establishment breakdown (Added / Disposed) shown below the register
+  const [monthlyDetailMonth, setMonthlyDetailMonth] = useState('');
+  const [monthlyDetail, setMonthlyDetail] = useState({ month: '', added: [], disposed: [] });
+  const [monthlyDetailLoading, setMonthlyDetailLoading] = useState(false);
 
   // Inquiry Officers State
   const [officers, setOfficers] = useState([
@@ -170,6 +174,7 @@ export default function App() {
   });
 
   const isCaseTab = ['bluebook', 'active_7a', 'hearings_today'].includes(activeTab);
+  const monthlyDetailLabel = (monthlyData.months.find(m => m.ym === monthlyDetailMonth)?.month) || monthlyDetailMonth;
 
   // Initial Fetch & Fetch on Page/Limit/Tab Change
   useEffect(() => {
@@ -190,6 +195,21 @@ export default function App() {
   useEffect(() => {
     fetchMonthly(fyYear);
   }, [fyYear]);
+
+  // When the register loads, keep the selected month if it is still in range,
+  // otherwise default to the most recent month that had any activity.
+  useEffect(() => {
+    const months = monthlyData.months || [];
+    if (!months.length) return;
+    if (monthlyDetailMonth && months.some(m => m.ym === monthlyDetailMonth)) {
+      fetchMonthlyDetail(monthlyDetailMonth);
+      return;
+    }
+    const active = [...months].reverse().find(m => (m.added || 0) > 0 || (m.disposed || 0) > 0);
+    const target = (active || months[months.length - 1]).ym;
+    setMonthlyDetailMonth(target);
+    fetchMonthlyDetail(target);
+  }, [monthlyData]);
 
   // Collections Register load
   useEffect(() => {
@@ -259,6 +279,24 @@ export default function App() {
         setMonthlyData({ fy: '', months: [] });
       })
       .finally(() => setMonthlyLoading(false));
+  };
+
+  const fetchMonthlyDetail = (ym) => {
+    if (!ym) return;
+    setMonthlyDetailLoading(true);
+    fetch(`${API_BASE}/dashboard/monthly/detail?month=${ym}`)
+      .then(r => r.json())
+      .then(data => setMonthlyDetail(data || { month: ym, added: [], disposed: [] }))
+      .catch(err => {
+        console.error("Monthly detail error:", err);
+        setMonthlyDetail({ month: ym, added: [], disposed: [] });
+      })
+      .finally(() => setMonthlyDetailLoading(false));
+  };
+
+  const selectMonthDetail = (ym) => {
+    setMonthlyDetailMonth(ym);
+    fetchMonthlyDetail(ym);
   };
 
   const fetchCollections = (q, month) => {
@@ -889,7 +927,8 @@ export default function App() {
                 <BarChart3 size={20} className="text-violet-600" /> Monthly Inquiry Register
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                Running balance of inquiries held from April to March (Financial Year {monthlyData.fy || '...'})
+                Running balance of inquiries held from April to March (Financial Year {monthlyData.fy || '...'}).
+                Click any month row to see the establishment-wise Added / Disposed list below.
               </p>
             </div>
 
@@ -927,7 +966,17 @@ export default function App() {
                 </thead>
                 <tbody className="text-lg divide-y divide-slate-100">
                   {monthlyData.months.map((mo, idx) => (
-                    <tr key={idx} className={idx === monthlyData.months.length - 1 ? 'bg-violet-50/40 font-semibold' : 'hover:bg-slate-50'}>
+                    <tr
+                      key={idx}
+                      onClick={() => selectMonthDetail(mo.ym)}
+                      title="Click to see establishment-wise details below"
+                      className={`cursor-pointer transition ${
+                        mo.ym === monthlyDetailMonth
+                          ? 'bg-violet-100 ring-2 ring-inset ring-violet-400 font-semibold'
+                          : idx === monthlyData.months.length - 1
+                            ? 'bg-violet-50/40 font-semibold hover:bg-violet-100/50'
+                            : 'hover:bg-slate-50'
+                      }`}>
                       <td className="p-4 font-bold text-slate-800">{mo.month}</td>
                       <td className="p-4 text-right font-mono text-slate-600">{mo.opening}</td>
                       <td className="p-4 text-right font-mono text-emerald-700">+{mo.added}</td>
@@ -950,6 +999,132 @@ export default function App() {
           ) : (
             <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-xl text-slate-400">
               No inquiry data available for this financial year.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* MONTHLY DASHBOARD - ESTABLISHMENT DETAILS (ADDED / DISPOSED) */}
+      {activeTab === 'dashboard' && monthlyDetailMonth && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-5">
+            <div>
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Building size={20} className="text-violet-600" /> Establishment Details — {monthlyDetailLabel}
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Inquiries added (initiated) and disposed (entered into the Red Book) during {monthlyDetailLabel}.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold">
+                {monthlyDetail.added.length} Added
+              </span>
+              <span className="px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 font-bold">
+                {monthlyDetail.disposed.length} Disposed
+              </span>
+            </div>
+          </div>
+
+          {monthlyDetailLoading ? (
+            <div className="text-center py-12 text-slate-400 font-medium">Loading establishment details...</div>
+          ) : (
+            <div className="space-y-6">
+              {/* ADDED DURING MONTH */}
+              <div>
+                <h3 className="text-sm font-bold text-emerald-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Plus size={15} /> Added During {monthlyDetailLabel} (Inquiries Initiated)
+                </h3>
+                {monthlyDetail.added.length > 0 ? (
+                  <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                    <table className="w-full text-left border-collapse min-w-[950px]">
+                      <thead className="bg-slate-100 text-xs font-bold text-slate-600 uppercase">
+                        <tr>
+                          <th className="p-3 text-center">Est Code</th>
+                          <th className="p-3 text-center">Establishment</th>
+                          <th className="p-3 text-center">Case No</th>
+                          <th className="p-3 text-center">Section</th>
+                          <th className="p-3 text-center">Officer</th>
+                          <th className="p-3 text-center">Period</th>
+                          <th className="p-3 text-center">Initiation Date</th>
+                          <th className="p-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-xs divide-y divide-slate-100">
+                        {monthlyDetail.added.map((c) => (
+                          <tr key={c.case_no} className="hover:bg-emerald-50/40">
+                            <td className="p-3 font-mono font-bold text-violet-700 whitespace-nowrap">{c.est_id}</td>
+                            <td className="p-3 font-semibold text-slate-800">{c.EST_NAME || 'N/A'}</td>
+                            <td className="p-3 font-mono text-slate-600 whitespace-nowrap">{c.case_no}</td>
+                            <td className="p-3 text-center"><span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{c.inquiry_section || '7A'}</span></td>
+                            <td className="p-3 text-slate-600">{c.assessing_officer}</td>
+                            <td className="p-3 text-slate-500 whitespace-nowrap">{c.period_from} to {c.period_to}</td>
+                            <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{c.initiation_date}</td>
+                            <td className="p-3 text-center">
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${c.status === 'CONCLUDED' ? 'bg-slate-200 text-slate-600' : 'bg-blue-100 text-blue-700'}`}>{c.status}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 text-sm">
+                    No inquiries were initiated during {monthlyDetailLabel}.
+                  </div>
+                )}
+              </div>
+
+              {/* DISPOSED DURING MONTH */}
+              <div>
+                <h3 className="text-sm font-bold text-rose-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <BookOpen size={15} /> Disposed During {monthlyDetailLabel} (Entered Red Book)
+                </h3>
+                {monthlyDetail.disposed.length > 0 ? (
+                  <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                    <table className="w-full text-left border-collapse min-w-[1000px]">
+                      <thead className="bg-slate-100 text-xs font-bold text-slate-600 uppercase">
+                        <tr>
+                          <th className="p-3 text-center">Est Code</th>
+                          <th className="p-3 text-center">Establishment</th>
+                          <th className="p-3 text-center">Case No</th>
+                          <th className="p-3 text-center">Section</th>
+                          <th className="p-3 text-center">Officer</th>
+                          <th className="p-3 text-center">Period</th>
+                          <th className="p-3 text-center">Order Date</th>
+                          <th className="p-3 text-center">Total Assessed</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-xs divide-y divide-slate-100">
+                        {monthlyDetail.disposed.map((r) => (
+                          <tr key={r.case_no} className="hover:bg-rose-50/40">
+                            <td className="p-3 font-mono font-bold text-violet-700 whitespace-nowrap">{r.est_id}</td>
+                            <td className="p-3 font-semibold text-slate-800">{r.EST_NAME || 'N/A'}</td>
+                            <td className="p-3 font-mono text-slate-600 whitespace-nowrap">{r.case_no}</td>
+                            <td className="p-3 text-center"><span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{r.inquiry_section || '7A'}</span></td>
+                            <td className="p-3 text-slate-600">{r.assessing_officer}</td>
+                            <td className="p-3 text-slate-500 whitespace-nowrap">{r.period_from} to {r.period_to}</td>
+                            <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{r.order_date}</td>
+                            <td className="p-3 text-right font-mono font-bold text-rose-700 whitespace-nowrap">₹{fmtMoney(r.total_assessed)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-slate-50 text-xs font-bold text-slate-700">
+                        <tr>
+                          <td className="p-3" colSpan={7}>Total Assessed — {monthlyDetailLabel}</td>
+                          <td className="p-3 text-right font-mono text-rose-700">
+                            ₹{fmtMoney(monthlyDetail.disposed.reduce((s, r) => s + (r.total_assessed || 0), 0))}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 text-sm">
+                    No inquiries were disposed during {monthlyDetailLabel}.
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
