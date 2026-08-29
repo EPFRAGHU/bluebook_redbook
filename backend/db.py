@@ -204,4 +204,16 @@ def create_tables(conn):
     """)
     ensure_column(conn, "collections", "instrument_no", "TEXT")
 
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS aeo (
+            aeo_id {autoinc},
+            name TEXT NOT NULL,
+            designation TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Area Enforcement Officer selected for an inquiry.
+    ensure_column(conn, "cases_7a", "aeo", "TEXT")
+
     conn.commit()

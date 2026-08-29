@@ -8,6 +8,8 @@ frontend/dist/
 backend/__pycache__/
 c
 downloadest-master-*.csv
+establishments_filtered_all.csv
+*.xlsx
 *.db
 backend/epfo_ro_bbs.db
 backend/database.db

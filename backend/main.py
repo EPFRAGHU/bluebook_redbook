@@ -71,6 +71,16 @@ class InquiryRequest(BaseModel):
     period_from: str
     period_to: str
     first_hearing_date: str
+    aeo: Optional[str] = None
+
+
+class AeoRequest(BaseModel):
+    name: str
+    designation: str = ""
+
+
+class AeoBulkRequest(BaseModel):
+    officers: list[AeoRequest]
 
 
 class HearingRequest(BaseModel):
@@ -114,6 +124,7 @@ class CaseTrackingRequest(BaseModel):
 class CaseEditRequest(BaseModel):
     inquiry_section: Optional[str] = None
     assessing_officer: Optional[str] = None
+    aeo: Optional[str] = None
     period_from: Optional[str] = None
     period_to: Optional[str] = None
     current_ndh: Optional[str] = None
@@ -217,7 +228,7 @@ def fetch_cases(status_filter=None, ndh_today=False, q="", page=1, limit=10):
     try:
         query = f"""
             SELECT
-                c.case_no, c.est_id, c.inquiry_section, c.assessing_officer,
+                c.case_no, c.est_id, c.inquiry_section, c.assessing_officer, c.aeo,
                 c.period_from, c.period_to, c.current_ndh, c.hearing_count, c.status,
                 c.f8_issued, c.nir_status, c.nir_cause, c.nir_case_no, c.nir_case_date,
                 c.bank_ac_attached,
@@ -330,6 +341,8 @@ def update_case(case_no: str, payload: CaseEditRequest):
         updates["inquiry_section"] = payload.inquiry_section
     if payload.assessing_officer is not None:
         updates["assessing_officer"] = payload.assessing_officer
+    if payload.aeo is not None:
+        updates["aeo"] = payload.aeo or None
     if payload.period_from is not None:
         updates["period_from"] = payload.period_from
     if payload.period_to is not None:
@@ -823,7 +836,7 @@ def get_monthly_dashboard_detail(month: str = Query(..., description="Month as Y
     try:
         cursor = db.execute(conn, f"""
             SELECT
-                c.case_no, c.est_id, c.inquiry_section, c.assessing_officer,
+                c.case_no, c.est_id, c.inquiry_section, c.assessing_officer, c.aeo,
                 c.period_from, c.period_to, c.status,
                 substr(c.created_at, 1, 10) AS initiation_date,
                 {est_columns_select("e")}
@@ -838,7 +851,7 @@ def get_monthly_dashboard_detail(month: str = Query(..., description="Month as Y
             SELECT
                 rb.case_no, rb.est_id, rb.order_date, rb.total_assessed,
                 rb.account1, rb.account2, rb.account10, rb.account21, rb.account22,
-                c.inquiry_section, c.assessing_officer, c.period_from, c.period_to,
+                c.inquiry_section, c.assessing_officer, c.aeo, c.period_from, c.period_to,
                 {est_columns_select("e")}
             FROM redbook rb
             LEFT JOIN establishments e ON rb.est_id = e.est_id
@@ -855,6 +868,111 @@ def get_monthly_dashboard_detail(month: str = Query(..., description="Month as Y
     return {"month": month, "added": added, "disposed": disposed}
 
 
+# ---------------------------------------------------------------------------
+# Area Enforcement Officers (AEO) directory
+# ---------------------------------------------------------------------------
+
+@app.get("/api/aeo")
+def list_aeo():
+    """All Area Enforcement Officers, ordered by name."""
+    conn = get_db_connection()
+    try:
+        cursor = db.execute(conn, "SELECT aeo_id, name, designation FROM aeo ORDER BY name ASC")
+        data = [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        print("AEO list error:", e)
+        data = []
+    conn.close()
+    return {"data": data}
+
+
+@app.post("/api/aeo")
+def add_aeo(req: AeoRequest):
+    """Add a single Area Enforcement Officer."""
+    name = req.name.strip()
+    designation = (req.designation or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Officer name is required")
+
+    conn = get_db_connection()
+    try:
+        cursor = db.execute(
+            conn,
+            "SELECT aeo_id FROM aeo WHERE lower(name) = lower(?) AND lower(designation) = lower(?)",
+            (name, designation),
+        )
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail=f"{name} is already in the AEO directory")
+
+        returning = " RETURNING aeo_id" if db.is_postgres() else ""
+        cursor = db.execute(
+            conn,
+            f"INSERT INTO aeo (name, designation) VALUES (?, ?){returning}",
+            (name, designation),
+        )
+        conn.commit()
+        aeo_id = cursor.fetchone()["aeo_id"] if db.is_postgres() else cursor.lastrowid
+        return {"success": True, "aeo_id": aeo_id, "name": name, "designation": designation}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.post("/api/aeo/bulk")
+def add_aeo_bulk(req: AeoBulkRequest):
+    """Insert many AEOs at once (used for spreadsheet imports).
+    Exact (name, designation) duplicates - existing or within the batch - are skipped."""
+    conn = get_db_connection()
+    inserted, skipped = 0, 0
+    try:
+        cursor = db.execute(conn, "SELECT lower(name) AS n, lower(designation) AS d FROM aeo")
+        seen = {(r["n"], r["d"]) for r in cursor.fetchall()}
+        for officer in req.officers:
+            name = (officer.name or "").strip()
+            designation = (officer.designation or "").strip()
+            if not name:
+                skipped += 1
+                continue
+            key = (name.lower(), designation.lower())
+            if key in seen:
+                skipped += 1
+                continue
+            db.execute(conn, "INSERT INTO aeo (name, designation) VALUES (?, ?)", (name, designation))
+            seen.add(key)
+            inserted += 1
+        conn.commit()
+        return {"success": True, "inserted": inserted, "skipped": skipped}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.delete("/api/aeo/{aeo_id}")
+def delete_aeo(aeo_id: int):
+    """Remove an Area Enforcement Officer from the directory."""
+    conn = get_db_connection()
+    try:
+        cursor = db.execute(conn, "SELECT aeo_id FROM aeo WHERE aeo_id = ?", (aeo_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="AEO not found")
+        db.execute(conn, "DELETE FROM aeo WHERE aeo_id = ?", (aeo_id,))
+        conn.commit()
+        return {"success": True, "aeo_id": aeo_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
 @app.post("/api/7a/initiate")
 def initiate_7a(req: InquiryRequest):
     conn = get_db_connection()
@@ -863,11 +981,11 @@ def initiate_7a(req: InquiryRequest):
         case_no = f"{req.inquiry_section}-{req.est_id}-{unique_suffix}"
         db.execute(conn, """
             INSERT INTO cases_7a
-                (case_no, est_id, inquiry_section, assessing_officer, period_from, period_to, current_ndh, hearing_count, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE')
+                (case_no, est_id, inquiry_section, assessing_officer, aeo, period_from, period_to, current_ndh, hearing_count, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE')
         """, (
             case_no, req.est_id, req.inquiry_section, req.assessing_officer,
-            req.period_from, req.period_to, req.first_hearing_date
+            (req.aeo or None), req.period_from, req.period_to, req.first_hearing_date
         ))
         # Automatically record hearing #1 (initiation / summons)
         db.execute(conn, """

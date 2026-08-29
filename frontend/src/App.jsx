@@ -87,11 +87,18 @@ export default function App() {
   const [showOfficerModal, setShowOfficerModal] = useState(false);
   const [newOfficer, setNewOfficer] = useState({ name: '', designation: 'APFC' });
 
+  // Area Enforcement Officers (AEO) - persisted in the database
+  const [showAeoModal, setShowAeoModal] = useState(false);
+  const [aeoList, setAeoList] = useState([]);
+  const [newAeo, setNewAeo] = useState({ name: '', designation: 'AEO' });
+  const [isSavingAeo, setIsSavingAeo] = useState(false);
+
   // Modal State for Inquiry Initiation
   const [showModal, setShowModal] = useState(false);
   const [inquiryFormData, setInquiryFormData] = useState({
     inquiry_section: '7A',
     assessing_officer: '',
+    aeo: '',
     period_from: '',
     period_to: '',
     first_hearing_date: ''
@@ -135,7 +142,7 @@ export default function App() {
   const [showEditCaseModal, setShowEditCaseModal] = useState(false);
   const [editCase, setEditCase] = useState(null);
   const [editCaseForm, setEditCaseForm] = useState({
-    inquiry_section: '7A', assessing_officer: '', period_from: '', period_to: '',
+    inquiry_section: '7A', assessing_officer: '', aeo: '', period_from: '', period_to: '',
     current_ndh: '', status: 'ACTIVE'
   });
   const [isSavingCaseEdit, setIsSavingCaseEdit] = useState(false);
@@ -181,6 +188,11 @@ export default function App() {
     fetchEstablishments(searchTerm, page, limit, activeTab);
     fetchStats();
   }, [page, limit, activeTab]);
+
+  // Load the Area Enforcement Officers directory once on mount
+  useEffect(() => {
+    fetchAeoList();
+  }, []);
 
   // Debounced Search Input Change
   useEffect(() => {
@@ -267,6 +279,52 @@ export default function App() {
       .then(r => r.json())
       .then(setStats)
       .catch(console.error);
+  };
+
+  const fetchAeoList = () => {
+    fetch(`${API_BASE}/aeo`)
+      .then(r => r.json())
+      .then(data => setAeoList(data.data || []))
+      .catch(console.error);
+  };
+
+  const aeoOptionLabel = (a) => (a.designation ? `${a.name} (${a.designation})` : a.name);
+
+  const handleAddAeo = async (e) => {
+    e.preventDefault();
+    if (!newAeo.name.trim()) return;
+    setIsSavingAeo(true);
+    try {
+      const res = await fetch(`${API_BASE}/aeo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newAeo.name.trim(), designation: newAeo.designation.trim() })
+      });
+      if (res.ok) {
+        setNewAeo({ name: '', designation: newAeo.designation });
+        fetchAeoList();
+      } else {
+        const err = await res.json();
+        alert(`Error: ${err.detail || 'Failed to add AEO'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to connect to backend server.');
+    } finally {
+      setIsSavingAeo(false);
+    }
+  };
+
+  const handleDeleteAeo = async (id) => {
+    if (!window.confirm('Remove this Area Enforcement Officer from the directory?')) return;
+    try {
+      const res = await fetch(`${API_BASE}/aeo/${id}`, { method: 'DELETE' });
+      if (res.ok) fetchAeoList();
+      else alert('Failed to delete AEO');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to connect to backend server.');
+    }
   };
 
   const fetchMonthly = (year) => {
@@ -380,6 +438,7 @@ export default function App() {
     setEditCaseForm({
       inquiry_section: c.inquiry_section || '7A',
       assessing_officer: c.assessing_officer || '',
+      aeo: c.aeo || '',
       period_from: c.period_from || '',
       period_to: c.period_to || '',
       current_ndh: c.current_ndh || '',
@@ -671,6 +730,7 @@ export default function App() {
         setInquiryFormData({
           inquiry_section: '7A',
           assessing_officer: '',
+          aeo: '',
           period_from: '',
           period_to: '',
           first_hearing_date: ''
@@ -842,6 +902,12 @@ export default function App() {
             onClick={() => setShowOfficerModal(true)}
             className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 border border-slate-300">
             <UserCheck size={15} className="text-blue-600" /> Inquiry Officers
+          </button>
+
+          <button
+            onClick={() => setShowAeoModal(true)}
+            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 border border-slate-300">
+            <Shield size={15} className="text-emerald-600" /> Area Enforcement Officers
           </button>
 
           <button
@@ -1351,6 +1417,7 @@ export default function App() {
                           <th className="p-3 text-center">Establishment</th>
                           <th className="p-3 text-center">Section</th>
                           <th className="p-3 text-center">Officer</th>
+                          <th className="p-3 text-center">AEO</th>
                           <th className="p-3 text-center">Period</th>
                           <th className="p-3 text-center">Initiation Date</th>
                           <th className="p-3 text-center">Hearing No.</th>
@@ -1375,6 +1442,7 @@ export default function App() {
                               <span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{c.inquiry_section || '7A'}</span>
                             </td>
                             <td className="p-3 text-slate-600">{c.assessing_officer}</td>
+                            <td className="p-3 text-slate-600">{c.aeo || '—'}</td>
                             <td className="p-3 text-slate-500">{c.period_from} to {c.period_to}</td>
                             <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{c.initiation_date || 'N/A'}</td>
                             <td className="p-3 text-center font-bold text-slate-700">{c.hearing_count || 1}</td>
@@ -1779,6 +1847,73 @@ export default function App() {
         </div>
       )}
 
+      {/* MODAL 1b: AREA ENFORCEMENT OFFICERS DIRECTORY */}
+      {showAeoModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-100 relative">
+            <button
+              onClick={() => setShowAeoModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+              <X size={20} />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-emerald-100 text-emerald-600 p-2.5 rounded-xl">
+                <Shield size={22} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Area Enforcement Officers Directory</h3>
+                <p className="text-xs text-slate-500">Saved in the database &mdash; available when initiating an inquiry</p>
+              </div>
+            </div>
+
+            {/* Add New AEO Form */}
+            <form onSubmit={handleAddAeo} className="bg-slate-50 p-3 rounded-xl border border-slate-200 mb-4 flex gap-2 text-xs">
+              <input
+                type="text"
+                placeholder="AEO Name (e.g. Shri A. Sharma)"
+                value={newAeo.name}
+                onChange={(e) => setNewAeo({ ...newAeo, name: e.target.value })}
+                className="flex-1 p-2 border border-slate-300 rounded-lg outline-none font-medium"
+                required
+              />
+              <input
+                type="text"
+                placeholder="Designation"
+                value={newAeo.designation}
+                onChange={(e) => setNewAeo({ ...newAeo, designation: e.target.value })}
+                className="w-32 p-2 border border-slate-300 rounded-lg outline-none font-semibold"
+              />
+              <button
+                type="submit"
+                disabled={isSavingAeo}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50">
+                <Plus size={14} /> Add
+              </button>
+            </form>
+
+            {/* AEO List */}
+            <div className="max-h-60 overflow-y-auto space-y-2 text-xs">
+              {aeoList.length === 0 ? (
+                <p className="text-center text-slate-400 py-6">No Area Enforcement Officers added yet.</p>
+              ) : aeoList.map((a) => (
+                <div key={a.aeo_id} className="flex justify-between items-center p-3 bg-white border border-slate-200 rounded-xl">
+                  <div>
+                    <p className="font-bold text-slate-800">{a.name}</p>
+                    {a.designation && <p className="text-slate-500 text-[11px] font-semibold">{a.designation}</p>}
+                  </div>
+                  <button
+                    onClick={() => handleDeleteAeo(a.aeo_id)}
+                    className="text-slate-400 hover:text-rose-600 p-1 rounded-lg transition">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL 2: INQUIRY INITIATION */}
       {showModal && selectedEst && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -1828,6 +1963,26 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-600 mb-1 flex items-center gap-1">
+                  <Shield size={13} className="text-emerald-600" /> Area Enforcement Officer (AEO)
+                </label>
+                <select
+                  value={inquiryFormData.aeo}
+                  onChange={(e) => setInquiryFormData({ ...inquiryFormData, aeo: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-semibold bg-white text-slate-700">
+                  <option value="">-- Choose AEO (optional) --</option>
+                  {aeoList.map((a) => (
+                    <option key={a.aeo_id} value={aeoOptionLabel(a)}>{aeoOptionLabel(a)}</option>
+                  ))}
+                </select>
+                {aeoList.length === 0 && (
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    No AEOs yet &mdash; add them via the "Area Enforcement Officers" button on the home page.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1921,6 +2076,10 @@ export default function App() {
               <div className="bg-slate-50 border border-slate-100 rounded-lg p-2">
                 <span className="text-slate-400 font-semibold uppercase block">Status</span>
                 <span className={`font-bold ${selectedCase.status === 'CONCLUDED' ? 'text-slate-500' : 'text-blue-600'}`}>{selectedCase.status}</span>
+              </div>
+              <div className="bg-slate-50 border border-slate-100 rounded-lg p-2 col-span-3">
+                <span className="text-slate-400 font-semibold uppercase block">Area Enforcement Officer</span>
+                <span className="font-semibold text-slate-700">{selectedCase.aeo || '—'}</span>
               </div>
             </div>
 
@@ -2400,6 +2559,21 @@ export default function App() {
                   onChange={(e) => setEditCaseForm({ ...editCaseForm, assessing_officer: e.target.value })}
                   className="w-full p-2 border border-slate-300 rounded-xl outline-none font-medium"
                 />
+              </div>
+              <div>
+                <label className="block text-slate-600 mb-1">Area Enforcement Officer (AEO)</label>
+                <select
+                  value={editCaseForm.aeo}
+                  onChange={(e) => setEditCaseForm({ ...editCaseForm, aeo: e.target.value })}
+                  className="w-full p-2 border border-slate-300 rounded-xl outline-none font-semibold bg-white">
+                  <option value="">-- None --</option>
+                  {editCaseForm.aeo && !aeoList.some(a => aeoOptionLabel(a) === editCaseForm.aeo) && (
+                    <option value={editCaseForm.aeo}>{editCaseForm.aeo}</option>
+                  )}
+                  {aeoList.map((a) => (
+                    <option key={a.aeo_id} value={aeoOptionLabel(a)}>{aeoOptionLabel(a)}</option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
