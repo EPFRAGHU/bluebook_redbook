@@ -628,9 +628,8 @@ export default function App() {
   };
 
   // ---------------------------------------------------------------------------
-  // PDF reports (Blue Book / Red Book / Collections / Monthly Dashboard)
+  // PDF reports (Blue Book / Red Book / Collections / Active / Hearings / Monthly)
   // ---------------------------------------------------------------------------
-  const [isExporting, setIsExporting] = useState(false);
   const REPORT_LIMIT = 100000;
   const rMoney = (v) => (Number(v) ? `₹${fmtMoney(v)}` : '—');
   const rMoney0 = (v) => `₹${fmtMoney(v)}`;
@@ -638,118 +637,225 @@ export default function App() {
   const rDash = (v) => (v == null || v === '' ? '—' : v);
   const sumBy = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
   const nowStamp = () => new Date().toLocaleString('en-IN');
+  const AEO_NA = '— Not assigned —';
+
+  // Shared column definition for the three case-list modules.
+  const CASE_COLS = {
+    head: ['Sr', 'Case No', 'Establishment', 'Est Code', 'Sec', 'Assessing Officer', 'AEO', 'Period', 'Initiated', 'Hearing #', 'Next Hearing', 'Status', 'Amount Received'],
+    aligns: ['r', 'l', 'l', 'l', 'c', 'l', 'l', 'l', 'c', 'c', 'c', 'c', 'r'],
+    row: (c, i) => [
+      i + 1, c.case_no, c.EST_NAME || 'N/A', c.est_id, c.inquiry_section || '7A',
+      rDash(c.assessing_officer), rowAeo(c), rPeriod(c), rDash(c.initiation_date),
+      c.hearing_count || 1, rDash(c.current_ndh), rDash(c.status), rMoney(c.amount_received),
+    ],
+    total: (rows) => ['', '', '', '', '', '', '', '', '', '', '', 'TOTAL', rMoney0(sumBy(rows, (r) => r.amount_received))],
+    summaryHead: (label) => ['Sr', label, 'Cases', 'Amount Received'],
+    summaryAligns: ['r', 'l', 'r', 'r'],
+    summaryRow: (key, rows, i) => [i + 1, key, rows.length, rMoney0(sumBy(rows, (r) => r.amount_received))],
+    summaryTotal: (rows) => ['', 'GRAND TOTAL', rows.length, rMoney0(sumBy(rows, (r) => r.amount_received))],
+  };
+
+  const REPORT_DEFS = {
+    bluebook: { ...CASE_COLS, endpoint: 'bluebook', title: 'Blue Book — Register of Inquiries', subtitle: 'Cases initiated under Section 7A / 7B / 14B / 7Q', countLabel: 'Total cases' },
+    active_7a: { ...CASE_COLS, endpoint: '7a/active', title: 'Active Inquiries — Pending Cases', subtitle: 'Section 7A / 7B / 14B / 7Q cases not yet finalised', countLabel: 'Active cases' },
+    hearings_today: { ...CASE_COLS, endpoint: 'hearings/today', title: 'Hearings Scheduled', subtitle: 'Cases whose Next Date of Hearing is today', countLabel: 'Hearings today' },
+    redbook: {
+      endpoint: 'redbook', title: 'Red Book — Defaulters & Recovery Register', subtitle: 'Assessment orders and recovery position', countLabel: 'Total defaulters',
+      head: ['Sr', 'Case No', 'Establishment', 'Est Code', 'Sec', 'Officer', 'AEO', 'Period', 'Order Date',
+        'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Assessed', 'Total Collected', 'Balance'],
+      aligns: ['r', 'l', 'l', 'l', 'c', 'l', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'],
+      row: (r, i) => [
+        i + 1, r.case_no, r.EST_NAME || 'N/A', r.est_id, r.inquiry_section || '7A',
+        rDash(r.assessing_officer), rowAeo(r), rPeriod(r), rDash(r.order_date),
+        rMoney(r.account1), rMoney(r.account2), rMoney(r.account10), rMoney(r.account21), rMoney(r.account22),
+        rMoney(r.total_assessed), rMoney(r.total_collected), rMoney((r.total_assessed || 0) - (r.total_collected || 0)),
+      ],
+      total: (rows) => ['', '', '', '', '', '', '', '', 'TOTAL',
+        rMoney0(sumBy(rows, (r) => r.account1)), rMoney0(sumBy(rows, (r) => r.account2)),
+        rMoney0(sumBy(rows, (r) => r.account10)), rMoney0(sumBy(rows, (r) => r.account21)),
+        rMoney0(sumBy(rows, (r) => r.account22)), rMoney0(sumBy(rows, (r) => r.total_assessed)),
+        rMoney0(sumBy(rows, (r) => r.total_collected)),
+        rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))],
+      summaryHead: (label) => ['Sr', label, 'Cases', 'Total Assessed', 'Total Collected', 'Balance'],
+      summaryAligns: ['r', 'l', 'r', 'r', 'r', 'r'],
+      summaryRow: (key, rows, i) => [i + 1, key, rows.length,
+        rMoney0(sumBy(rows, (r) => r.total_assessed)), rMoney0(sumBy(rows, (r) => r.total_collected)),
+        rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))],
+      summaryTotal: (rows) => ['', 'GRAND TOTAL', rows.length,
+        rMoney0(sumBy(rows, (r) => r.total_assessed)), rMoney0(sumBy(rows, (r) => r.total_collected)),
+        rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))],
+    },
+    collections: {
+      endpoint: 'collections', title: 'Collection Register', subtitle: 'Payments received against Red Book cases', countLabel: 'Entries',
+      head: ['Sr', 'Payment Date', 'Est Code', 'Establishment', 'AEO', 'Sec', 'Officer', 'Period', 'Order Date',
+        'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Collected', 'Cheque / DD No.', 'Mode'],
+      aligns: ['r', 'c', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'l', 'c'],
+      row: (c, i) => [
+        i + 1, rDash(c.collection_date), c.est_id, c.EST_NAME || 'N/A', rowAeo(c),
+        c.inquiry_section || '7A', rDash(c.assessing_officer), rPeriod(c), rDash(c.order_date),
+        rMoney(c.account1), rMoney(c.account2), rMoney(c.account10), rMoney(c.account21), rMoney(c.account22),
+        rMoney(c.total_collected), rDash(c.instrument_no), c.mode || 'CHEQUE',
+      ],
+      total: (rows) => ['', '', '', '', '', '', '', '', 'TOTAL',
+        rMoney0(sumBy(rows, (r) => r.account1)), rMoney0(sumBy(rows, (r) => r.account2)),
+        rMoney0(sumBy(rows, (r) => r.account10)), rMoney0(sumBy(rows, (r) => r.account21)),
+        rMoney0(sumBy(rows, (r) => r.account22)), rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''],
+      summaryHead: (label) => ['Sr', label, 'Entries', 'Total Collected'],
+      summaryAligns: ['r', 'l', 'r', 'r'],
+      summaryRow: (key, rows, i) => [i + 1, key, rows.length, rMoney0(sumBy(rows, (r) => r.total_collected))],
+      summaryTotal: (rows) => ['', 'GRAND TOTAL', rows.length, rMoney0(sumBy(rows, (r) => r.total_collected))],
+    },
+  };
+
+  const groupKeyOf = (groupBy, r) => {
+    if (groupBy === 'aeo') {
+      const v = rowAeo(r);
+      return v && v !== '—' ? v : AEO_NA;
+    }
+    return (r.assessing_officer || '').trim() || AEO_NA;
+  };
+
+  const sortKeys = (keys) => [...keys].sort((a, b) => {
+    if (a === AEO_NA) return 1;
+    if (b === AEO_NA) return -1;
+    return a.localeCompare(b);
+  });
+
+  const exportExtraMeta = (kind) => {
+    if (kind === 'collections') {
+      const monthLabel = collectionMonth
+        ? (monthlyCollections.months.find((m) => m.ym === collectionMonth)?.month || collectionMonth)
+        : 'All months';
+      return [{ label: 'Period', value: monthLabel }, { label: 'Filter', value: searchTerm.trim() || 'All records' }];
+    }
+    return [{ label: 'Filter', value: searchTerm.trim() || 'All records' }];
+  };
+
+  const buildFlatReport = (def, rows, extraMeta) => {
+    openPrintableReport({
+      title: def.title,
+      subtitle: def.subtitle,
+      meta: [...extraMeta, { label: def.countLabel, value: String(rows.length) }, { label: 'Generated', value: nowStamp() }],
+      sections: [{ head: def.head, aligns: def.aligns, rows: rows.map((r, i) => def.row(r, i)), total: def.total(rows) }],
+    });
+  };
+
+  const buildGroupedReport = (def, allRows, groupBy, onlyKey, extraMeta) => {
+    const groups = new Map();
+    allRows.forEach((r) => {
+      const k = groupKeyOf(groupBy, r);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    });
+    let keys = sortKeys(groups.keys());
+    if (onlyKey) keys = keys.filter((k) => k === onlyKey);
+
+    const groupLabel = groupBy === 'aeo' ? 'Area Enforcement Officer' : 'Inquiry Officer';
+    const usedRows = keys.reduce((acc, k) => acc.concat(groups.get(k) || []), []);
+    const sections = [];
+
+    if (!onlyKey && keys.length > 1) {
+      sections.push({
+        caption: `Summary — by ${groupLabel} (A–Z)`,
+        head: def.summaryHead(groupLabel),
+        aligns: def.summaryAligns,
+        rows: keys.map((k, i) => def.summaryRow(k, groups.get(k), i)),
+        total: def.summaryTotal(usedRows),
+      });
+    }
+
+    keys.forEach((k) => {
+      const grp = groups.get(k) || [];
+      sections.push({
+        caption: `${groupLabel}: ${k}   (${grp.length} ${grp.length === 1 ? 'record' : 'records'})`,
+        pageBreak: sections.length > 0,
+        head: def.head,
+        aligns: def.aligns,
+        rows: grp.map((r, i) => def.row(r, i)),
+        total: def.total(grp),
+      });
+    });
+
+    openPrintableReport({
+      title: onlyKey ? `${def.title} — ${onlyKey}` : `${def.title} — by ${groupLabel}`,
+      subtitle: def.subtitle,
+      meta: [
+        ...extraMeta,
+        { label: 'Grouped by', value: onlyKey ? `${groupLabel} (single)` : `${groupLabel} (A–Z)` },
+        { label: def.countLabel, value: String(usedRows.length) },
+        { label: 'Generated', value: nowStamp() },
+      ],
+      sections,
+    });
+  };
 
   const exportReport = async (kind) => {
-    setIsExporting(true);
+    // Monthly Dashboard keeps its own dedicated report.
+    if (kind !== 'dashboard') return;
     try {
-      if (kind === 'bluebook' || kind === 'redbook') {
-        const res = await fetch(`${API_BASE}/${kind}?q=${encodeURIComponent(searchTerm)}&page=1&limit=${REPORT_LIMIT}`);
-        const { data = [] } = await res.json();
-        (kind === 'bluebook' ? buildBlueBookReport : buildRedBookReport)(data);
-      } else if (kind === 'collections') {
-        const url = `${API_BASE}/collections?q=${encodeURIComponent(searchTerm)}&page=1&limit=${REPORT_LIMIT}${collectionMonth ? `&month=${collectionMonth}` : ''}`;
-        const { data = [] } = await (await fetch(url)).json();
-        buildCollectionsReport(data);
-      } else if (kind === 'dashboard') {
-        const months = monthlyData.months || [];
-        const details = await Promise.all(
-          months.map((m) =>
-            fetch(`${API_BASE}/dashboard/monthly/detail?month=${m.ym}`)
-              .then((r) => r.json())
-              .catch(() => ({ added: [], disposed: [] }))
-          )
-        );
-        buildMonthlyReport(months, details);
-      }
+      const months = monthlyData.months || [];
+      const details = await Promise.all(
+        months.map((m) =>
+          fetch(`${API_BASE}/dashboard/monthly/detail?month=${m.ym}`)
+            .then((r) => r.json())
+            .catch(() => ({ added: [], disposed: [] }))
+        )
+      );
+      buildMonthlyReport(months, details);
     } catch (e) {
       console.error('Report error:', e);
       alert('Could not generate the report. Please try again.');
-    } finally {
-      setIsExporting(false);
     }
   };
 
-  const buildBlueBookReport = (rows) => {
-    openPrintableReport({
-      title: 'Blue Book — Register of Inquiries',
-      subtitle: 'Cases initiated under Section 7A / 7B / 14B / 7Q',
-      meta: [
-        { label: 'Filter', value: searchTerm.trim() || 'All records' },
-        { label: 'Total cases', value: String(rows.length) },
-        { label: 'Generated', value: nowStamp() },
-      ],
-      sections: [{
-        head: ['Sr', 'Case No', 'Establishment', 'Est Code', 'Sec', 'Assessing Officer', 'AEO', 'Period', 'Initiated', 'Hearing #', 'Next Hearing', 'Status', 'Amount Received'],
-        aligns: ['r', 'l', 'l', 'l', 'c', 'l', 'l', 'l', 'c', 'c', 'c', 'c', 'r'],
-        rows: rows.map((c, i) => [
-          i + 1, c.case_no, c.EST_NAME || 'N/A', c.est_id, c.inquiry_section || '7A',
-          rDash(c.assessing_officer), rowAeo(c), rPeriod(c), rDash(c.initiation_date),
-          c.hearing_count || 1, rDash(c.current_ndh), rDash(c.status), rMoney(c.amount_received),
-        ]),
-        total: ['', '', '', '', '', '', '', '', '', '', '', 'TOTAL', rMoney0(sumBy(rows, (r) => r.amount_received))],
-      }],
-    });
+  // Export dialog (Blue Book / Red Book / Collections / Active / Hearings)
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportKind, setExportKind] = useState(null);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportData, setExportData] = useState([]);
+  const [exportGroupBy, setExportGroupBy] = useState('none'); // none | officer | aeo
+  const [exportScope, setExportScope] = useState('all');      // all | one
+  const [exportPick, setExportPick] = useState('');
+
+  const openExportDialog = async (kind) => {
+    setExportKind(kind);
+    setExportGroupBy('none');
+    setExportScope('all');
+    setExportPick('');
+    setExportData([]);
+    setShowExportModal(true);
+    setExportLoading(true);
+    try {
+      const q = `q=${encodeURIComponent(searchTerm)}&page=1&limit=${REPORT_LIMIT}`;
+      const url = kind === 'collections'
+        ? `${API_BASE}/collections?${q}${collectionMonth ? `&month=${collectionMonth}` : ''}`
+        : `${API_BASE}/${REPORT_DEFS[kind].endpoint}?${q}`;
+      const { data = [] } = await (await fetch(url)).json();
+      setExportData(data);
+    } catch (e) {
+      console.error('Export fetch error:', e);
+      alert('Could not load the data for this report.');
+      setShowExportModal(false);
+    } finally {
+      setExportLoading(false);
+    }
   };
 
-  const buildRedBookReport = (rows) => {
-    openPrintableReport({
-      title: 'Red Book — Defaulters & Recovery Register',
-      subtitle: 'Assessment orders and recovery position',
-      meta: [
-        { label: 'Filter', value: searchTerm.trim() || 'All records' },
-        { label: 'Total defaulters', value: String(rows.length) },
-        { label: 'Generated', value: nowStamp() },
-      ],
-      sections: [{
-        head: ['Sr', 'Case No', 'Establishment', 'Est Code', 'Sec', 'Officer', 'AEO', 'Period', 'Order Date',
-          'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Assessed', 'Total Collected', 'Balance'],
-        aligns: ['r', 'l', 'l', 'l', 'c', 'l', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'],
-        rows: rows.map((r, i) => [
-          i + 1, r.case_no, r.EST_NAME || 'N/A', r.est_id, r.inquiry_section || '7A',
-          rDash(r.assessing_officer), rowAeo(r), rPeriod(r), rDash(r.order_date),
-          rMoney(r.account1), rMoney(r.account2), rMoney(r.account10), rMoney(r.account21), rMoney(r.account22),
-          rMoney(r.total_assessed), rMoney(r.total_collected),
-          rMoney((r.total_assessed || 0) - (r.total_collected || 0)),
-        ]),
-        total: ['', '', '', '', '', '', '', '', 'TOTAL',
-          rMoney0(sumBy(rows, (r) => r.account1)), rMoney0(sumBy(rows, (r) => r.account2)),
-          rMoney0(sumBy(rows, (r) => r.account10)), rMoney0(sumBy(rows, (r) => r.account21)),
-          rMoney0(sumBy(rows, (r) => r.account22)), rMoney0(sumBy(rows, (r) => r.total_assessed)),
-          rMoney0(sumBy(rows, (r) => r.total_collected)),
-          rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))],
-      }],
-    });
-  };
+  const exportOfficers = [...new Set(exportData.map((r) => (r.assessing_officer || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  const exportAeos = [...new Set(exportData.map((r) => rowAeo(r)).filter((v) => v && v !== '—'))]
+    .sort((a, b) => a.localeCompare(b));
 
-  const buildCollectionsReport = (rows) => {
-    const monthLabel = collectionMonth
-      ? (monthlyCollections.months.find((m) => m.ym === collectionMonth)?.month || collectionMonth)
-      : 'All months';
-    openPrintableReport({
-      title: 'Collection Register',
-      subtitle: 'Payments received against Red Book cases',
-      meta: [
-        { label: 'Period', value: monthLabel },
-        { label: 'Filter', value: searchTerm.trim() || 'All records' },
-        { label: 'Entries', value: String(rows.length) },
-        { label: 'Generated', value: nowStamp() },
-      ],
-      sections: [{
-        head: ['Sr', 'Payment Date', 'Est Code', 'Establishment', 'AEO', 'Sec', 'Officer', 'Period', 'Order Date',
-          'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Collected', 'Cheque / DD No.', 'Mode'],
-        aligns: ['r', 'c', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'l', 'c'],
-        rows: rows.map((c, i) => [
-          i + 1, rDash(c.collection_date), c.est_id, c.EST_NAME || 'N/A', rowAeo(c),
-          c.inquiry_section || '7A', rDash(c.assessing_officer), rPeriod(c), rDash(c.order_date),
-          rMoney(c.account1), rMoney(c.account2), rMoney(c.account10), rMoney(c.account21), rMoney(c.account22),
-          rMoney(c.total_collected), rDash(c.instrument_no), c.mode || 'CHEQUE',
-        ]),
-        total: ['', '', '', '', '', '', '', '', 'TOTAL',
-          rMoney0(sumBy(rows, (r) => r.account1)), rMoney0(sumBy(rows, (r) => r.account2)),
-          rMoney0(sumBy(rows, (r) => r.account10)), rMoney0(sumBy(rows, (r) => r.account21)),
-          rMoney0(sumBy(rows, (r) => r.account22)), rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''],
-      }],
-    });
+  const runExport = () => {
+    const def = REPORT_DEFS[exportKind];
+    const extraMeta = exportExtraMeta(exportKind);
+    if (exportGroupBy === 'none') {
+      buildFlatReport(def, exportData, extraMeta);
+    } else {
+      const onlyKey = exportScope === 'one' && exportPick ? exportPick : null;
+      buildGroupedReport(def, exportData, exportGroupBy, onlyKey, extraMeta);
+    }
+    setShowExportModal(false);
   };
 
   const buildMonthlyReport = (months, details) => {
@@ -1192,9 +1298,9 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => exportReport('dashboard')}
-                disabled={isExporting || !(monthlyData.months && monthlyData.months.length)}
+                disabled={!(monthlyData.months && monthlyData.months.length)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition disabled:opacity-50">
-                <Download size={14} /> {isExporting ? 'Preparing…' : 'Save as PDF'}
+                <Download size={14} /> Save as PDF
               </button>
 
               {/* FINANCIAL YEAR SWITCHER */}
@@ -1413,10 +1519,9 @@ export default function App() {
 
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => exportReport('collections')}
-                disabled={isExporting}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition disabled:opacity-50">
-                <Download size={14} /> {isExporting ? 'Preparing…' : 'Save as PDF'}
+                onClick={() => openExportDialog('collections')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition">
+                <Download size={14} /> Save as PDF
               </button>
               <select
                 value={collectionMonth}
@@ -1581,12 +1686,11 @@ export default function App() {
             </h2>
 
             <div className="flex flex-wrap items-center gap-3">
-              {(activeTab === 'bluebook' || activeTab === 'redbook') && (
+              {['bluebook', 'redbook', 'active_7a', 'hearings_today'].includes(activeTab) && (
                 <button
-                  onClick={() => exportReport(activeTab)}
-                  disabled={isExporting}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition disabled:opacity-50">
-                  <Download size={14} /> {isExporting ? 'Preparing…' : 'Save as PDF'}
+                  onClick={() => openExportDialog(activeTab)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition">
+                  <Download size={14} /> Save as PDF
                 </button>
               )}
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
@@ -2142,6 +2246,108 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1c: EXPORT PDF OPTIONS */}
+      {showExportModal && exportKind && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 relative">
+            <button
+              onClick={() => setShowExportModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+              <X size={20} />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-rose-100 text-rose-600 p-2.5 rounded-xl">
+                <Download size={22} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Save as PDF</h3>
+                <p className="text-xs text-slate-500">{REPORT_DEFS[exportKind].title}</p>
+              </div>
+            </div>
+
+            {exportLoading ? (
+              <div className="text-center py-10 text-slate-400 font-medium text-sm">Loading records…</div>
+            ) : (
+              <div className="space-y-4 text-sm">
+                <p className="text-xs text-slate-500">
+                  {exportData.length} record{exportData.length === 1 ? '' : 's'} match the current filter.
+                </p>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">Report type</label>
+                  <div className="space-y-1.5">
+                    {[
+                      { v: 'none', label: 'All records — single PDF' },
+                      { v: 'officer', label: 'By Inquiry Officer' },
+                      { v: 'aeo', label: 'By Area Enforcement Officer' },
+                    ].map((o) => (
+                      <label key={o.v} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="exportGroupBy"
+                          checked={exportGroupBy === o.v}
+                          onChange={() => { setExportGroupBy(o.v); setExportScope('all'); setExportPick(''); }}
+                        />
+                        <span className="font-medium text-slate-700">{o.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {exportGroupBy !== 'none' && (() => {
+                  const list = exportGroupBy === 'aeo' ? exportAeos : exportOfficers;
+                  const who = exportGroupBy === 'aeo' ? 'AEOs' : 'inquiry officers';
+                  return (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input type="radio" name="exportScope" className="mt-0.5"
+                          checked={exportScope === 'all'} onChange={() => setExportScope('all')} />
+                        <span className="text-slate-700">
+                          <span className="font-semibold">All {list.length} {who}</span> in one combined PDF
+                          <span className="block text-[11px] text-slate-500">A section per {exportGroupBy === 'aeo' ? 'AEO' : 'officer'}, A–Z, new page each, with subtotals + grand total.</span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input type="radio" name="exportScope" className="mt-0.5"
+                          checked={exportScope === 'one'} onChange={() => setExportScope('one')} />
+                        <span className="text-slate-700 flex-1">
+                          <span className="font-semibold">Just one</span>
+                          <select
+                            value={exportPick}
+                            onChange={(e) => { setExportPick(e.target.value); setExportScope('one'); }}
+                            className="mt-1 w-full p-2 border border-slate-300 rounded-lg outline-none font-semibold bg-white text-xs">
+                            <option value="">— choose {exportGroupBy === 'aeo' ? 'an AEO' : 'an officer'} —</option>
+                            {list.map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                        </span>
+                      </label>
+                      {list.length === 0 && (
+                        <p className="text-[11px] text-rose-600">No {who} found in these records.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => setShowExportModal(false)}
+                    className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold text-sm">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={runExport}
+                    disabled={exportData.length === 0 || (exportGroupBy !== 'none' && exportScope === 'one' && !exportPick)}
+                    className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-sm shadow-sm disabled:opacity-50">
+                    Generate PDF
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

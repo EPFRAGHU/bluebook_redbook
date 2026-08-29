@@ -28,7 +28,7 @@ function renderSection(s) {
   const foot = s.total
     ? `<tfoot><tr>${s.total.map((c, i) => `<td class="${cls(s.aligns && s.aligns[i])}">${esc(c)}</td>`).join('')}</tr></tfoot>`
     : '';
-  return `<section class="sec">${s.caption ? `<h3>${esc(s.caption)}</h3>` : ''}<table><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></section>`;
+  return `<section class="sec${s.pageBreak ? ' brk' : ''}">${s.caption ? `<h3>${esc(s.caption)}</h3>` : ''}<table><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></section>`;
 }
 
 function buildHtml({ title, subtitle, meta = [], sections = [], orientation = 'landscape' }) {
@@ -52,6 +52,7 @@ body { font-family:'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif; color:va
 .meta span { white-space:nowrap; }
 .meta b { color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.3px; margin-right:5px; }
 .sec { margin-bottom:14px; }
+.sec.brk { break-before:page; page-break-before:always; }
 .sec h3 { font-size:11px; font-weight:800; color:var(--nav); margin:0 0 5px; padding-left:7px; border-left:3px solid var(--nav); }
 table { width:100%; border-collapse:collapse; table-layout:auto; }
 thead { display:table-header-group; }
