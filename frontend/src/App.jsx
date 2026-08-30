@@ -17,6 +17,7 @@ const ACCOUNT_HEADS = [
   { key: 'account21', qkey: 'q_account21', label: 'A/c 21 (EDLI)' },
   { key: 'account22', qkey: 'q_account22', label: 'A/c 22 (EDLI Admin Charges)' },
 ];
+const FY_KEY = '__FY__'; // sentinel for the "whole financial year" drill-down
 const Q_KEYS = ACCOUNT_HEADS.map((h) => h.qkey);
 const ACC_KEYS = ACCOUNT_HEADS.map((h) => h.key);
 const COLL_KEYS = ['collected1', 'collected2', 'collected10', 'collected21', 'collected22'];
@@ -190,7 +191,10 @@ export default function App() {
   });
 
   const isCaseTab = ['bluebook', 'active_7a', 'hearings_today'].includes(activeTab);
-  const monthlyDetailLabel = (monthlyData.months.find(m => m.ym === monthlyDetailMonth)?.month) || monthlyDetailMonth;
+  const monthlyIsFY = monthlyDetailMonth === FY_KEY;
+  const monthlyDetailLabel = monthlyIsFY
+    ? `Financial Year ${monthlyData.fy || ''}`.trim()
+    : (monthlyData.months.find(m => m.ym === monthlyDetailMonth)?.month) || monthlyDetailMonth;
 
   // Initial Fetch & Fetch on Page/Limit/Tab Change
   useEffect(() => {
@@ -222,7 +226,7 @@ export default function App() {
   useEffect(() => {
     const months = monthlyData.months || [];
     if (!months.length) return;
-    if (monthlyDetailMonth && months.some(m => m.ym === monthlyDetailMonth)) {
+    if (monthlyDetailMonth === FY_KEY || (monthlyDetailMonth && months.some(m => m.ym === monthlyDetailMonth))) {
       fetchMonthlyDetail(monthlyDetailMonth);
       return;
     }
@@ -355,6 +359,32 @@ export default function App() {
   const fetchMonthlyDetail = (ym) => {
     if (!ym) return;
     setMonthlyDetailLoading(true);
+
+    if (ym === FY_KEY) {
+      const months = monthlyData.months || [];
+      const fyLbl = `Financial Year ${monthlyData.fy || ''}`.trim();
+      Promise.all(months.map((m) =>
+        fetch(`${API_BASE}/dashboard/monthly/detail?month=${m.ym}`)
+          .then(r => r.json())
+          .catch(() => ({ added: [], disposed: [] }))
+      ))
+        .then((all) => {
+          const added = [], disposed = [];
+          months.forEach((m, i) => {
+            const d = all[i] || {};
+            (d.added || []).forEach((c) => added.push({ ...c, _month: m.month }));
+            (d.disposed || []).forEach((c) => disposed.push({ ...c, _month: m.month }));
+          });
+          setMonthlyDetail({ month: fyLbl, added, disposed });
+        })
+        .catch((err) => {
+          console.error("FY detail error:", err);
+          setMonthlyDetail({ month: fyLbl, added: [], disposed: [] });
+        })
+        .finally(() => setMonthlyDetailLoading(false));
+      return;
+    }
+
     fetch(`${API_BASE}/dashboard/monthly/detail?month=${ym}`)
       .then(r => r.json())
       .then(data => setMonthlyDetail(data || { month: ym, added: [], disposed: [] }))
@@ -1511,8 +1541,15 @@ export default function App() {
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="bg-slate-50 text-lg font-bold text-slate-700">
-                  <tr>
+                <tfoot className="text-lg font-bold text-slate-700">
+                  <tr
+                    onClick={() => selectMonthDetail(FY_KEY)}
+                    title="Click to see every establishment added / disposed this financial year"
+                    className={`cursor-pointer transition ${
+                      monthlyIsFY
+                        ? 'bg-violet-200 ring-2 ring-inset ring-violet-500 font-black'
+                        : 'bg-slate-100 hover:bg-violet-100/60'
+                    }`}>
                     <td className="p-4">Financial Year Total</td>
                     <td className="p-4 text-right font-mono">{monthlyData.months[0]?.opening ?? 0}</td>
                     <td className="p-4 text-right font-mono text-emerald-700">+{monthlyData.months.reduce((s, m) => s + (m.added || 0), 0)}</td>
@@ -1566,6 +1603,7 @@ export default function App() {
                     <table className="w-full text-left border-collapse min-w-[1050px]">
                       <thead className="bg-slate-100 text-xs font-bold text-slate-600 uppercase">
                         <tr>
+                          {monthlyIsFY && <th className="p-3 text-center">Month</th>}
                           <th className="p-3 text-center">Est Code</th>
                           <th className="p-3 text-center">Establishment</th>
                           <th className="p-3 text-center">AEO</th>
@@ -1580,6 +1618,7 @@ export default function App() {
                       <tbody className="text-xs divide-y divide-slate-100">
                         {monthlyDetail.added.map((c) => (
                           <tr key={c.case_no} className="hover:bg-emerald-50/40">
+                            {monthlyIsFY && <td className="p-3 font-semibold text-violet-700 whitespace-nowrap">{c._month}</td>}
                             <td className="p-3 font-mono font-bold text-violet-700 whitespace-nowrap">{c.est_id}</td>
                             <td className="p-3 font-semibold text-slate-800">{c.EST_NAME || 'N/A'}</td>
                             <td className="p-3 text-slate-600 whitespace-nowrap">{rowAeo(c)}</td>
@@ -1613,6 +1652,7 @@ export default function App() {
                     <table className="w-full text-left border-collapse min-w-[1100px]">
                       <thead className="bg-slate-100 text-xs font-bold text-slate-600 uppercase">
                         <tr>
+                          {monthlyIsFY && <th className="p-3 text-center">Month</th>}
                           <th className="p-3 text-center">Est Code</th>
                           <th className="p-3 text-center">Establishment</th>
                           <th className="p-3 text-center">AEO</th>
@@ -1627,6 +1667,7 @@ export default function App() {
                       <tbody className="text-xs divide-y divide-slate-100">
                         {monthlyDetail.disposed.map((r) => (
                           <tr key={r.case_no} className="hover:bg-rose-50/40">
+                            {monthlyIsFY && <td className="p-3 font-semibold text-violet-700 whitespace-nowrap">{r._month}</td>}
                             <td className="p-3 font-mono font-bold text-violet-700 whitespace-nowrap">{r.est_id}</td>
                             <td className="p-3 font-semibold text-slate-800">{r.EST_NAME || 'N/A'}</td>
                             <td className="p-3 text-slate-600 whitespace-nowrap">{rowAeo(r)}</td>
@@ -1641,7 +1682,7 @@ export default function App() {
                       </tbody>
                       <tfoot className="bg-slate-50 text-xs font-bold text-slate-700">
                         <tr>
-                          <td className="p-3" colSpan={8}>Total Assessed — {monthlyDetailLabel}</td>
+                          <td className="p-3" colSpan={monthlyIsFY ? 9 : 8}>Total Assessed — {monthlyDetailLabel}</td>
                           <td className="p-3 text-right font-mono text-rose-700">
                             ₹{fmtMoney(monthlyDetail.disposed.reduce((s, r) => s + (r.total_assessed || 0), 0))}
                           </td>
