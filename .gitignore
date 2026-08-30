@@ -13,3 +13,4 @@ establishments_filtered_all.csv
 *.db
 backend/epfo_ro_bbs.db
 backend/database.db
+.serena/

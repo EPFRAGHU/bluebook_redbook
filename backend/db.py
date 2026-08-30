@@ -182,6 +182,13 @@ def create_tables(conn):
         ("account21", "REAL DEFAULT 0"),
         ("account22", "REAL DEFAULT 0"),
         ("total_assessed", "REAL DEFAULT 0"),
+        # Section 7Q interest rider on a 14B order, account-wise. Zero for
+        # non-14B cases. total_assessed = SUM(account*) + SUM(q_account*).
+        ("q_account1", "REAL DEFAULT 0"),
+        ("q_account2", "REAL DEFAULT 0"),
+        ("q_account10", "REAL DEFAULT 0"),
+        ("q_account21", "REAL DEFAULT 0"),
+        ("q_account22", "REAL DEFAULT 0"),
     ]:
         ensure_column(conn, "redbook", col, typ)
 

@@ -107,6 +107,12 @@ class FinalizeRequest(BaseModel):
     account10: float = 0
     account21: float = 0
     account22: float = 0
+    # Section 7Q interest rider (14B orders only); account-wise.
+    q_account1: float = 0
+    q_account2: float = 0
+    q_account10: float = 0
+    q_account21: float = 0
+    q_account22: float = 0
 
 
 class CollectionRequest(BaseModel):
@@ -147,6 +153,11 @@ class RedBookEditRequest(BaseModel):
     account10: Optional[float] = None
     account21: Optional[float] = None
     account22: Optional[float] = None
+    q_account1: Optional[float] = None
+    q_account2: Optional[float] = None
+    q_account10: Optional[float] = None
+    q_account21: Optional[float] = None
+    q_account22: Optional[float] = None
 
 
 class CollectionEditRequest(BaseModel):
@@ -399,10 +410,15 @@ def delete_case(case_no: str):
 @app.put("/api/redbook/{case_no}")
 def update_redbook(case_no: str, payload: RedBookEditRequest):
     """Edit a Red Book entry's order date and account-wise dues."""
+    account_keys = [
+        "account1", "account2", "account10", "account21", "account22",
+        "q_account1", "q_account2", "q_account10", "q_account21", "q_account22",
+    ]
+
     updates = {}
     if payload.order_date is not None:
         updates["order_date"] = payload.order_date
-    for key in ["account1", "account2", "account10", "account21", "account22"]:
+    for key in account_keys:
         val = getattr(payload, key)
         if val is not None:
             updates[key] = val
@@ -411,20 +427,20 @@ def update_redbook(case_no: str, payload: RedBookEditRequest):
         raise HTTPException(status_code=400, detail="No Red Book fields provided")
 
     conn = get_db_connection()
-    cursor = db.execute(conn, "SELECT account1, account2, account10, account21, account22, total_assessed FROM redbook WHERE case_no = ?", (case_no,))
+    cursor = db.execute(
+        conn,
+        f"SELECT {', '.join(account_keys)}, total_assessed FROM redbook WHERE case_no = ?",
+        (case_no,),
+    )
     row = cursor.fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Red Book entry not found")
 
-    account_keys = ["account1", "account2", "account10", "account21", "account22"]
     if any(k in updates for k in account_keys):
-        a1 = updates.get("account1", row["account1"] or 0)
-        a2 = updates.get("account2", row["account2"] or 0)
-        a10 = updates.get("account10", row["account10"] or 0)
-        a21 = updates.get("account21", row["account21"] or 0)
-        a22 = updates.get("account22", row["account22"] or 0)
-        updates["total_assessed"] = a1 + a2 + a10 + a21 + a22
+        updates["total_assessed"] = sum(
+            (updates.get(k, row[k]) or 0) for k in account_keys
+        )
 
     set_clause = ", ".join(f"{col} = ?" for col in updates)
     params = list(updates.values()) + [case_no]
@@ -532,6 +548,7 @@ def get_redbook(q: str = "", page: int = 1, limit: int = 10):
             SELECT
                 r.case_no, r.est_id, r.order_date,
                 r.account1, r.account2, r.account10, r.account21, r.account22, r.total_assessed,
+                r.q_account1, r.q_account2, r.q_account10, r.q_account21, r.q_account22,
                 COALESCE(c.sum1, 0) AS collected1,
                 COALESCE(c.sum2, 0) AS collected2,
                 COALESCE(c.sum10, 0) AS collected10,
@@ -1104,23 +1121,35 @@ def finalize_order(req: FinalizeRequest):
         if row["status"] != "ACTIVE":
             raise HTTPException(status_code=400, detail="Case is already concluded")
 
-        total = req.account1 + req.account2 + req.account10 + req.account21 + req.account22
+        damages = req.account1 + req.account2 + req.account10 + req.account21 + req.account22
+        interest = req.q_account1 + req.q_account2 + req.q_account10 + req.q_account21 + req.q_account22
+        total = damages + interest
 
         db.execute(conn, """
-            INSERT INTO redbook (case_no, est_id, order_date, account1, account2, account10, account21, account22, total_assessed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO redbook
+                (case_no, est_id, order_date,
+                 account1, account2, account10, account21, account22,
+                 q_account1, q_account2, q_account10, q_account21, q_account22,
+                 total_assessed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             req.case_no, row["est_id"], req.order_date,
-            req.account1, req.account2, req.account10, req.account21, req.account22, total
+            req.account1, req.account2, req.account10, req.account21, req.account22,
+            req.q_account1, req.q_account2, req.q_account10, req.q_account21, req.q_account22,
+            total
         ))
 
         final_hearing_no = (row["hearing_count"] or 0) + 1
+        note = f"Final assessment order issued. Total dues assessed: Rs.{total:,.2f}."
+        if interest:
+            note = (f"Final assessment order issued. Section 14B damages Rs.{damages:,.2f} + "
+                    f"Section 7Q interest Rs.{interest:,.2f} = Rs.{total:,.2f}.")
         db.execute(conn, """
             INSERT INTO hearing_log (case_no, hearing_no, hearing_date, proceedings_summary, next_hearing_date)
             VALUES (?, ?, ?, ?, NULL)
         """, (
             req.case_no, final_hearing_no, req.order_date,
-            f"Final assessment order issued. Total dues assessed: Rs.{total:,.2f}. Case concluded & entered into Red Book."
+            note + " Case concluded & entered into Red Book."
         ))
 
         db.execute(conn, """
@@ -1128,7 +1157,7 @@ def finalize_order(req: FinalizeRequest):
         """, (final_hearing_no, req.case_no))
 
         conn.commit()
-        return {"success": True, "total_assessed": total}
+        return {"success": True, "total_assessed": total, "damages": damages, "interest": interest}
     except HTTPException:
         raise
     except Exception as e:
