@@ -661,10 +661,6 @@ export default function App() {
   const nowStamp = () => new Date().toLocaleString('en-IN');
   const AEO_NA = '— Not assigned —';
 
-  // Column-wise sums of a key list across records → array of ₹ strings.
-  const colSum = (rows, keys) => keys.map((k) => rMoney0(sumBy(rows, (r) => r[k])));
-  const keyTotal = (rows, keys) => sumBy(rows, (r) => keys.reduce((s, k) => s + (r[k] || 0), 0));
-  const has7QRows = (rows) => rows.some((r) => r.inquiry_section === '14B' && keyTotal([r], Q_KEYS) > 0);
 
   // Shared column definition for the three case-list modules.
   const CASE_COLS = {
@@ -691,11 +687,12 @@ export default function App() {
       head: ['Sr', 'Case No', 'Establishment', 'Est Code', 'Sec', 'Officer', 'AEO', 'Period', 'Order Date',
         'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Assessed', 'Total Collected', 'Balance'],
       aligns: ['r', 'l', 'l', 'l', 'c', 'l', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'],
-      // A 14B case with a 7Q rider prints as two rows: 14B damages, then 7Q interest.
+      // A 14B case with a 7Q rider prints as three rows: 14B damages, 7Q
+      // interest, then a combined sub-total for that establishment.
       expand: (r) => {
         const qTot = Q_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
         return (r.inquiry_section === '14B' && qTot > 0)
-          ? [{ ...r, _part: '14B' }, { ...r, _part: '7Q' }]
+          ? [{ ...r, _part: '14B' }, { ...r, _part: '7Q' }, { ...r, _part: 'sub' }]
           : [r];
       },
       row: (r, i) => {
@@ -708,9 +705,15 @@ export default function App() {
             rMoney(r.q_account1), rMoney(r.q_account2), rMoney(r.q_account10), rMoney(r.q_account21), rMoney(r.q_account22),
             rMoney0(intr), rMoney0(qColl), rMoney0(intr - qColl)];
         }
+        if (r._part === 'sub') {
+          return ['', '', '↳ 14B + 7Q sub-total', '', '', '', '', '', '',
+            ...ACC_KEYS.map((k, idx) => rMoney0((r[k] || 0) + (r[Q_KEYS[idx]] || 0))),
+            rMoney0(r.total_assessed), rMoney0(r.total_collected),
+            rMoney0((r.total_assessed || 0) - (r.total_collected || 0))];
+        }
         const is14BRow = r._part === '14B';
         return [
-          i + 1, r.case_no, r.EST_NAME || 'N/A', r.est_id, is14BRow ? '14B' : (r.inquiry_section || '7A'),
+          r._sr || i + 1, r.case_no, r.EST_NAME || 'N/A', r.est_id, is14BRow ? '14B' : (r.inquiry_section || '7A'),
           rDash(r.assessing_officer), rowAeo(r), rPeriod(r), rDash(r.order_date),
           rMoney(r.account1), rMoney(r.account2), rMoney(r.account10), rMoney(r.account21), rMoney(r.account22),
           rMoney(is14BRow ? dmg : r.total_assessed),
@@ -718,21 +721,11 @@ export default function App() {
           rMoney(is14BRow ? (dmg - dmgColl) : ((r.total_assessed || 0) - (r.total_collected || 0))),
         ];
       },
-      total: (rows) => {
-        const grand = ['', '', '', '', '', '', '', '', has7QRows(rows) ? 'GRAND TOTAL' : 'TOTAL',
-          ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
-          rMoney0(sumBy(rows, (r) => r.total_assessed)),
-          rMoney0(sumBy(rows, (r) => r.total_collected)),
-          rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))];
-        if (!has7QRows(rows)) return grand;
-        const dA = keyTotal(rows, ACC_KEYS), dC = keyTotal(rows, COLL_KEYS);
-        const iA = keyTotal(rows, Q_KEYS), iC = keyTotal(rows, Q_COLL_KEYS);
-        return [
-          ['', '', '', '', '', '', '', '', 'Sub-total · 14B / Principal', ...colSum(rows, ACC_KEYS), rMoney0(dA), rMoney0(dC), rMoney0(dA - dC)],
-          ['', '', '', '', '', '', '', '', 'Sub-total · 7Q Interest', ...colSum(rows, Q_KEYS), rMoney0(iA), rMoney0(iC), rMoney0(iA - iC)],
-          grand,
-        ];
-      },
+      total: (rows) => ['', '', '', '', '', '', '', '', 'GRAND TOTAL',
+        ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
+        rMoney0(sumBy(rows, (r) => r.total_assessed)),
+        rMoney0(sumBy(rows, (r) => r.total_collected)),
+        rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))],
       summaryHead: (label) => ['Sr', label, 'Cases', 'Total Assessed', 'Total Collected', 'Balance'],
       summaryAligns: ['r', 'l', 'r', 'r', 'r', 'r'],
       summaryRow: (key, rows, i) => [i + 1, key, rows.length,
@@ -747,11 +740,12 @@ export default function App() {
       head: ['Sr', 'Payment Date', 'Est Code', 'Establishment', 'AEO', 'Sec', 'Officer', 'Period', 'Order Date',
         'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Collected', 'Cheque / DD No.', 'Mode'],
       aligns: ['r', 'c', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'l', 'c'],
-      // A payment against a 14B case with a 7Q portion prints as two rows.
+      // A 14B-case payment prints as three rows: 14B, 7Q, then a combined
+      // sub-total for that establishment / payment.
       expand: (c) => {
         const qTot = Q_KEYS.reduce((s, k) => s + (c[k] || 0), 0);
         return (c.inquiry_section === '14B' && qTot > 0)
-          ? [{ ...c, _part: '14B' }, { ...c, _part: '7Q' }]
+          ? [{ ...c, _part: '14B' }, { ...c, _part: '7Q' }, { ...c, _part: 'sub' }]
           : [c];
       },
       row: (c, i) => {
@@ -762,25 +756,22 @@ export default function App() {
             rMoney(c.q_account1), rMoney(c.q_account2), rMoney(c.q_account10), rMoney(c.q_account21), rMoney(c.q_account22),
             rMoney0(intr), '', ''];
         }
+        if (c._part === 'sub') {
+          return ['', '', '', '↳ 14B + 7Q sub-total', '', '', '', '', '',
+            ...ACC_KEYS.map((k, idx) => rMoney0((c[k] || 0) + (c[Q_KEYS[idx]] || 0))),
+            rMoney0(c.total_collected), '', ''];
+        }
         const is14BRow = c._part === '14B';
         return [
-          i + 1, rDash(c.collection_date), c.est_id, c.EST_NAME || 'N/A', rowAeo(c),
+          c._sr || i + 1, rDash(c.collection_date), c.est_id, c.EST_NAME || 'N/A', rowAeo(c),
           is14BRow ? '14B' : (c.inquiry_section || '7A'), rDash(c.assessing_officer), rPeriod(c), rDash(c.order_date),
           rMoney(c.account1), rMoney(c.account2), rMoney(c.account10), rMoney(c.account21), rMoney(c.account22),
           rMoney(is14BRow ? dmg : c.total_collected), rDash(c.instrument_no), c.mode || 'CHEQUE',
         ];
       },
-      total: (rows) => {
-        const grand = ['', '', '', '', '', '', '', '', has7QRows(rows) ? 'GRAND TOTAL' : 'TOTAL',
-          ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
-          rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''];
-        if (!has7QRows(rows)) return grand;
-        return [
-          ['', '', '', '', '', '', '', '', 'Sub-total · 14B / Principal', ...colSum(rows, ACC_KEYS), rMoney0(keyTotal(rows, ACC_KEYS)), '', ''],
-          ['', '', '', '', '', '', '', '', 'Sub-total · 7Q Interest', ...colSum(rows, Q_KEYS), rMoney0(keyTotal(rows, Q_KEYS)), '', ''],
-          grand,
-        ];
-      },
+      total: (rows) => ['', '', '', '', '', '', '', '', 'GRAND TOTAL',
+        ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
+        rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''],
       summaryHead: (label) => ['Sr', label, 'Entries', 'Total Collected'],
       summaryAligns: ['r', 'l', 'r', 'r'],
       summaryRow: (key, rows, i) => [i + 1, key, rows.length, rMoney0(sumBy(rows, (r) => r.total_collected))],
@@ -814,7 +805,16 @@ export default function App() {
   };
 
   // Some rows expand into several table rows (a 14B Red Book case → a 14B row + a 7Q row).
-  const expandDefRows = (def, recs) => (def.expand ? recs.flatMap((r) => def.expand(r)) : recs);
+  // Expand records that print as several rows (14B → 14B / 7Q / sub-total).
+  // The first row of each record carries `_sr` so the Sr column stays 1,2,3…
+  const expandDefRows = (def, recs) => {
+    if (!def.expand) return recs;
+    let sr = 0;
+    return recs.flatMap((r) => {
+      sr += 1;
+      return def.expand(r).map((p, idx) => (idx === 0 ? { ...p, _sr: sr } : p));
+    });
+  };
 
   const buildFlatReport = (def, rows, extraMeta) => {
     openPrintableReport({
