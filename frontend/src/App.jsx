@@ -20,6 +20,7 @@ const ACCOUNT_HEADS = [
 const Q_KEYS = ACCOUNT_HEADS.map((h) => h.qkey);
 const ACC_KEYS = ACCOUNT_HEADS.map((h) => h.key);
 const COLL_KEYS = ['collected1', 'collected2', 'collected10', 'collected21', 'collected22'];
+const Q_COLL_KEYS = ['q_collected1', 'q_collected2', 'q_collected10', 'q_collected21', 'q_collected22'];
 
 function fmtMoney(v) {
   const n = Number(v || 0);
@@ -139,7 +140,8 @@ export default function App() {
     collection_date: new Date().toISOString().split('T')[0],
     mode: 'CHEQUE',
     instrument_no: '',
-    account1: 0, account2: 0, account10: 0, account21: 0, account22: 0
+    account1: 0, account2: 0, account10: 0, account21: 0, account22: 0,
+    q_account1: 0, q_account2: 0, q_account10: 0, q_account21: 0, q_account22: 0
   });
   const [isSubmittingCollection, setIsSubmittingCollection] = useState(false);
 
@@ -166,7 +168,8 @@ export default function App() {
   const [editCollection, setEditCollection] = useState(null);
   const [editCollectionForm, setEditCollectionForm] = useState({
     collection_date: '', mode: 'CHEQUE', instrument_no: '',
-    account1: 0, account2: 0, account10: 0, account21: 0, account22: 0
+    account1: 0, account2: 0, account10: 0, account21: 0, account22: 0,
+    q_account1: 0, q_account2: 0, q_account10: 0, q_account21: 0, q_account22: 0
   });
   const [isSavingCollectionEdit, setIsSavingCollectionEdit] = useState(false);
 
@@ -397,7 +400,8 @@ export default function App() {
       collection_date: new Date().toISOString().split('T')[0],
       mode: 'CHEQUE',
       instrument_no: '',
-      account1: 0, account2: 0, account10: 0, account21: 0, account22: 0
+      account1: 0, account2: 0, account10: 0, account21: 0, account22: 0,
+      q_account1: 0, q_account2: 0, q_account10: 0, q_account21: 0, q_account22: 0
     });
     setShowCollectionModal(true);
   };
@@ -407,6 +411,7 @@ export default function App() {
     if (!collectionCase) return;
     setIsSubmittingCollection(true);
     try {
+      const is14B = (collectionCase.inquiry_section || '') === '14B';
       const payload = {
         case_no: collectionCase.case_no,
         collection_date: collectionForm.collection_date,
@@ -417,6 +422,11 @@ export default function App() {
         account10: parseFloat(collectionForm.account10) || 0,
         account21: parseFloat(collectionForm.account21) || 0,
         account22: parseFloat(collectionForm.account22) || 0,
+        q_account1: is14B ? (parseFloat(collectionForm.q_account1) || 0) : 0,
+        q_account2: is14B ? (parseFloat(collectionForm.q_account2) || 0) : 0,
+        q_account10: is14B ? (parseFloat(collectionForm.q_account10) || 0) : 0,
+        q_account21: is14B ? (parseFloat(collectionForm.q_account21) || 0) : 0,
+        q_account22: is14B ? (parseFloat(collectionForm.q_account22) || 0) : 0,
       };
       const res = await fetch(`${API_BASE}/collections`, {
         method: 'POST',
@@ -425,7 +435,10 @@ export default function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        alert(`✅ Payment recorded!\nTotal Collected: ₹${fmtMoney(data.total_collected)}`);
+        const msg = data.interest
+          ? `✅ Payment recorded!\n14B: ₹${fmtMoney(data.damages)}\n7Q: ₹${fmtMoney(data.interest)}\nTotal Collected: ₹${fmtMoney(data.total_collected)}`
+          : `✅ Payment recorded!\nTotal Collected: ₹${fmtMoney(data.total_collected)}`;
+        alert(msg);
         setShowCollectionModal(false);
         fetchCollections(searchTerm, collectionMonth);
         fetchMonthlyCollections(collectionsFy);
@@ -568,7 +581,9 @@ export default function App() {
       mode: col.mode || 'CHEQUE',
       instrument_no: col.instrument_no || '',
       account1: col.account1 || 0, account2: col.account2 || 0, account10: col.account10 || 0,
-      account21: col.account21 || 0, account22: col.account22 || 0
+      account21: col.account21 || 0, account22: col.account22 || 0,
+      q_account1: col.q_account1 || 0, q_account2: col.q_account2 || 0, q_account10: col.q_account10 || 0,
+      q_account21: col.q_account21 || 0, q_account22: col.q_account22 || 0
     });
     setShowEditCollectionModal(true);
   };
@@ -681,17 +696,21 @@ export default function App() {
       row: (r, i) => {
         const dmg = ACC_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
         const intr = Q_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
+        const dmgColl = COLL_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
+        const qColl = Q_COLL_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
         if (r._part === '7Q') {
           return ['', '', '', '', '7Q', '', '', '', '',
             rMoney(r.q_account1), rMoney(r.q_account2), rMoney(r.q_account10), rMoney(r.q_account21), rMoney(r.q_account22),
-            rMoney0(intr), '', ''];
+            rMoney0(intr), rMoney0(qColl), rMoney0(intr - qColl)];
         }
+        const is14BRow = r._part === '14B';
         return [
-          i + 1, r.case_no, r.EST_NAME || 'N/A', r.est_id, r._part === '14B' ? '14B' : (r.inquiry_section || '7A'),
+          i + 1, r.case_no, r.EST_NAME || 'N/A', r.est_id, is14BRow ? '14B' : (r.inquiry_section || '7A'),
           rDash(r.assessing_officer), rowAeo(r), rPeriod(r), rDash(r.order_date),
           rMoney(r.account1), rMoney(r.account2), rMoney(r.account10), rMoney(r.account21), rMoney(r.account22),
-          rMoney(r._part === '14B' ? dmg : r.total_assessed), rMoney(r.total_collected),
-          rMoney((r.total_assessed || 0) - (r.total_collected || 0)),
+          rMoney(is14BRow ? dmg : r.total_assessed),
+          rMoney(is14BRow ? dmgColl : r.total_collected),
+          rMoney(is14BRow ? (dmg - dmgColl) : ((r.total_assessed || 0) - (r.total_collected || 0))),
         ];
       },
       total: (rows) => ['', '', '', '', '', '', '', '', 'TOTAL',
@@ -716,13 +735,14 @@ export default function App() {
       row: (c, i) => [
         i + 1, rDash(c.collection_date), c.est_id, c.EST_NAME || 'N/A', rowAeo(c),
         c.inquiry_section || '7A', rDash(c.assessing_officer), rPeriod(c), rDash(c.order_date),
-        rMoney(c.account1), rMoney(c.account2), rMoney(c.account10), rMoney(c.account21), rMoney(c.account22),
+        rMoney((c.account1 || 0) + (c.q_account1 || 0)), rMoney((c.account2 || 0) + (c.q_account2 || 0)),
+        rMoney((c.account10 || 0) + (c.q_account10 || 0)), rMoney((c.account21 || 0) + (c.q_account21 || 0)),
+        rMoney((c.account22 || 0) + (c.q_account22 || 0)),
         rMoney(c.total_collected), rDash(c.instrument_no), c.mode || 'CHEQUE',
       ],
       total: (rows) => ['', '', '', '', '', '', '', '', 'TOTAL',
-        rMoney0(sumBy(rows, (r) => r.account1)), rMoney0(sumBy(rows, (r) => r.account2)),
-        rMoney0(sumBy(rows, (r) => r.account10)), rMoney0(sumBy(rows, (r) => r.account21)),
-        rMoney0(sumBy(rows, (r) => r.account22)), rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''],
+        ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
+        rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''],
       summaryHead: (label) => ['Sr', label, 'Entries', 'Total Collected'],
       summaryAligns: ['r', 'l', 'r', 'r'],
       summaryRow: (key, rows, i) => [i + 1, key, rows.length, rMoney0(sumBy(rows, (r) => r.total_collected))],
@@ -1196,6 +1216,7 @@ export default function App() {
   };
 
   const is14BCase = (selectedCase?.inquiry_section || '') === '14B';
+  const collIs14B = (collectionCase?.inquiry_section || '') === '14B';
   const finalizeDamages = ACC_KEYS.reduce((s, k) => s + (parseFloat(finalizeForm[k]) || 0), 0);
   const finalizeInterest = Q_KEYS.reduce((s, k) => s + (parseFloat(finalizeForm[k]) || 0), 0);
   const finalizeTotal = finalizeDamages + (is14BCase ? finalizeInterest : 0);
@@ -1720,11 +1741,11 @@ export default function App() {
                       <td className="p-3 text-slate-600">{col.assessing_officer}</td>
                       <td className="p-3 text-slate-500">{col.period_from} to {col.period_to}</td>
                       <td className="p-3 font-semibold text-slate-700">{col.order_date}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account1)}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account2)}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account10)}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account21)}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney(col.account22)}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account1 || 0) + (col.q_account1 || 0))}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account2 || 0) + (col.q_account2 || 0))}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account10 || 0) + (col.q_account10 || 0))}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account21 || 0) + (col.q_account21 || 0))}</td>
+                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account22 || 0) + (col.q_account22 || 0))}</td>
                       <td className="p-3 text-right font-mono font-bold text-teal-700">₹{fmtMoney(col.total_collected)}</td>
                       <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{col.collection_date}</td>
                       <td className="p-3 font-mono font-bold text-slate-700">{col.instrument_no || '—'}</td>
@@ -1985,8 +2006,12 @@ export default function App() {
                           const m = (v) => (v ? `₹${fmtMoney(v)}` : '');
                           const qTotal = Q_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
                           const dmgTotal = ACC_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
+                          const dmgColl = COLL_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
+                          const qColl = Q_COLL_KEYS.reduce((s, k) => s + (r[k] || 0), 0);
                           const has7Q = (r.inquiry_section === '14B') && qTotal > 0;
-                          const bTotal = (r.total_assessed || 0) - (r.total_collected || 0);
+                          const mainAssessedTot = has7Q ? dmgTotal : (r.total_assessed || 0);
+                          const mainCollTot = has7Q ? dmgColl : (r.total_collected || 0);
+                          const bTotal = mainAssessedTot - mainCollTot;
 
                           const mainRow = (
                             <tr key={r.case_no} className="hover:bg-rose-50/30">
@@ -2006,14 +2031,13 @@ export default function App() {
                               {ACC_KEYS.map((k) => (
                                 <td key={k} className="p-3 text-right font-mono border-x border-slate-200">{m(r[k])}</td>
                               ))}
-                              <td className="p-3 text-right font-mono font-bold text-rose-700 border-x border-slate-200">{m(has7Q ? dmgTotal : r.total_assessed)}</td>
+                              <td className="p-3 text-right font-mono font-bold text-rose-700 border-x border-slate-200">{m(mainAssessedTot)}</td>
                               {COLL_KEYS.map((k) => (
                                 <td key={k} className="p-3 text-right font-mono text-emerald-700 border-x border-slate-200">{m(r[k])}</td>
                               ))}
-                              <td className="p-3 text-right font-mono font-bold text-teal-700 border-x border-slate-200">{m(r.total_collected)}</td>
+                              <td className="p-3 text-right font-mono font-bold text-teal-700 border-x border-slate-200">{m(mainCollTot)}</td>
                               {ACC_KEYS.map((k, i) => {
-                                const due = (r[k] || 0) + (has7Q ? (r[Q_KEYS[i]] || 0) : 0);
-                                const bal = due - (r[COLL_KEYS[i]] || 0);
+                                const bal = (r[k] || 0) - (r[COLL_KEYS[i]] || 0);
                                 return <td key={k} className="p-3 text-right font-mono text-slate-600 border-x border-slate-200">{bal ? `₹${fmtMoney(bal)}` : ''}</td>;
                               })}
                               <td className="p-3 text-right font-mono font-bold text-slate-800 border-x border-slate-200">{bTotal ? `₹${fmtMoney(bTotal)}` : ''}</td>
@@ -2053,8 +2077,15 @@ export default function App() {
                                 <td key={k} className="p-3 text-right font-mono text-amber-800 border-x border-slate-200">{m(r[k])}</td>
                               ))}
                               <td className="p-3 text-right font-mono font-bold text-amber-800 border-x border-slate-200">{m(qTotal)}</td>
-                              {Array.from({ length: 6 }).map((_, i) => <td key={'ce' + i} className="p-3 border-x border-slate-200"></td>)}
-                              {Array.from({ length: 6 }).map((_, i) => <td key={'be' + i} className="p-3 border-x border-slate-200"></td>)}
+                              {Q_COLL_KEYS.map((k) => (
+                                <td key={k} className="p-3 text-right font-mono text-emerald-700 border-x border-slate-200">{m(r[k])}</td>
+                              ))}
+                              <td className="p-3 text-right font-mono font-bold text-teal-700 border-x border-slate-200">{m(qColl)}</td>
+                              {Q_KEYS.map((k, i) => {
+                                const bal = (r[k] || 0) - (r[Q_COLL_KEYS[i]] || 0);
+                                return <td key={k} className="p-3 text-right font-mono text-slate-600 border-x border-slate-200">{bal ? `₹${fmtMoney(bal)}` : ''}</td>;
+                              })}
+                              <td className="p-3 text-right font-mono font-bold text-slate-800 border-x border-slate-200">{(qTotal - qColl) ? `₹${fmtMoney(qTotal - qColl)}` : ''}</td>
                               <td className="p-3 border-x border-slate-200 border-l-2 border-slate-500"></td>
                               <td className="p-3 border-x border-slate-200 border-r-2 border-slate-500"></td>
                             </tr>
@@ -2069,12 +2100,12 @@ export default function App() {
                             <td key={k} className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r[k] || 0) + (r[Q_KEYS[i]] || 0), 0))}</td>
                           ))}
                           <td className="p-3 text-right font-mono text-rose-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.total_assessed || 0), 0))}</td>
-                          {COLL_KEYS.map((k) => (
-                            <td key={k} className="p-3 text-right font-mono text-emerald-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r[k] || 0), 0))}</td>
+                          {COLL_KEYS.map((k, i) => (
+                            <td key={k} className="p-3 text-right font-mono text-emerald-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r[k] || 0) + (r[Q_COLL_KEYS[i]] || 0), 0))}</td>
                           ))}
                           <td className="p-3 text-right font-mono text-teal-700 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + (r.total_collected || 0), 0))}</td>
                           {ACC_KEYS.map((k, i) => (
-                            <td key={k} className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r[k] || 0) + (r[Q_KEYS[i]] || 0) - (r[COLL_KEYS[i]] || 0)), 0))}</td>
+                            <td key={k} className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r[k] || 0) + (r[Q_KEYS[i]] || 0) - (r[COLL_KEYS[i]] || 0) - (r[Q_COLL_KEYS[i]] || 0)), 0))}</td>
                           ))}
                           <td className="p-3 text-right font-mono text-slate-800 border-x border-slate-300">₹{fmtMoney(searchResults.reduce((s, r) => s + ((r.total_assessed || 0) - (r.total_collected || 0)), 0))}</td>
                           <td className="p-3 border-x border-slate-300 border-l-2 border-slate-500"></td>
@@ -2890,11 +2921,22 @@ export default function App() {
             </div>
 
             {(() => {
-              const bal = (collectionCase.total_assessed || 0) - (collectionCase.total_collected || 0);
+              const col = collectionCase;
+              const total = (col.total_assessed || 0) - (col.total_collected || 0);
+              const dmgBal = ACC_KEYS.reduce((s, k) => s + (col[k] || 0), 0) - COLL_KEYS.reduce((s, k) => s + (col[k] || 0), 0);
+              const intBal = Q_KEYS.reduce((s, k) => s + (col[k] || 0), 0) - Q_COLL_KEYS.reduce((s, k) => s + (col[k] || 0), 0);
               return (
-                <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl flex justify-between items-center mb-4 text-xs">
-                  <span className="text-slate-600 font-bold uppercase">Outstanding Balance Before This Payment</span>
-                  <span className="text-teal-700 font-black text-xl">₹{fmtMoney(bal)}</span>
+                <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl mb-4 text-xs space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-600 font-bold uppercase">Outstanding Balance Before This Payment</span>
+                    <span className="text-teal-700 font-black text-xl">₹{fmtMoney(total)}</span>
+                  </div>
+                  {collIs14B && (
+                    <div className="flex gap-4 justify-end text-[11px] text-slate-500 font-semibold">
+                      <span>14B Damages: ₹{fmtMoney(dmgBal)}</span>
+                      <span>7Q Interest: ₹{fmtMoney(intBal)}</span>
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -2934,66 +2976,71 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ACCOUNT-WISE TABLE: Assessed / This Payment / Balance */}
+              {/* ACCOUNT-WISE TABLE(S): Assessed / Collected Earlier / This Payment / Balance */}
               {(() => {
                 const col = collectionCase;
-                const dues = [
-                  col.account1 || 0, col.account2 || 0, col.account10 || 0,
-                  col.account21 || 0, col.account22 || 0, col.total_assessed || 0
-                ];
-                const alreadyCollected = [
-                  col.collected1 || 0, col.collected2 || 0, col.collected10 || 0,
-                  col.collected21 || 0, col.collected22 || 0, col.total_collected || 0
-                ];
-                const thisPay = [
-                  parseFloat(collectionForm.account1) || 0,
-                  parseFloat(collectionForm.account2) || 0,
-                  parseFloat(collectionForm.account10) || 0,
-                  parseFloat(collectionForm.account21) || 0,
-                  parseFloat(collectionForm.account22) || 0,
-                  ACCOUNT_HEADS.reduce((s, h) => s + (parseFloat(collectionForm[h.key]) || 0), 0)
-                ];
-                const balance = dues.map((d, i) => d - alreadyCollected[i] - thisPay[i]);
-                return (
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-100 text-slate-600 uppercase text-[10px]">
-                          <th className="p-2">A/c Head</th>
-                          <th className="p-2 text-right">Assessed Dues</th>
-                          <th className="p-2 text-right">Collected Earlier</th>
-                          <th className="p-2 text-right">This Payment</th>
-                          <th className="p-2 text-right">Balance</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-sm">
-                        {ACCOUNT_HEADS.map((h, i) => (
-                          <tr key={h.key}>
-                            <td className="p-2 font-bold text-slate-700">{h.label}</td>
-                            <td className="p-2 text-right font-mono text-slate-600">₹{fmtMoney(dues[i])}</td>
-                            <td className="p-2 text-right font-mono text-emerald-700">₹{fmtMoney(alreadyCollected[i])}</td>
-                            <td className="p-2 text-right">
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={collectionForm[h.key]}
-                                onChange={(e) => setCollectionForm({ ...collectionForm, [h.key]: e.target.value })}
-                                className="w-full max-w-[120px] p-1.5 border border-teal-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none font-medium text-right text-sm"
-                              />
-                            </td>
-                            <td className="p-2 text-right font-mono font-bold text-slate-800">₹{fmtMoney(balance[i])}</td>
+                const num = (v) => parseFloat(v) || 0;
+                const payTable = (isQ) => {
+                  const accOf = (h) => (isQ ? h.qkey : h.key);
+                  const collKey = (h) => (isQ ? 'q_' : '') + 'collected' + h.key.replace('account', '');
+                  const rows = ACCOUNT_HEADS.map((h) => {
+                    const a = col[accOf(h)] || 0;
+                    const e = col[collKey(h)] || 0;
+                    const p = num(collectionForm[accOf(h)]);
+                    return { h, a, e, p, bal: a - e - p };
+                  });
+                  const t = rows.reduce((o, r) => ({ a: o.a + r.a, e: o.e + r.e, p: o.p + r.p, bal: o.bal + r.bal }),
+                    { a: 0, e: 0, p: 0, bal: 0 });
+                  return (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      {collIs14B && (
+                        <div className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide ${isQ ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}`}>
+                          {isQ ? 'Section 7Q — Interest' : 'Section 14B — Damages'}
+                        </div>
+                      )}
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-600 uppercase text-[10px]">
+                            <th className="p-2">A/c Head</th>
+                            <th className="p-2 text-right">Assessed</th>
+                            <th className="p-2 text-right">Collected Earlier</th>
+                            <th className="p-2 text-right">This Payment</th>
+                            <th className="p-2 text-right">Balance</th>
                           </tr>
-                        ))}
-                        <tr className="bg-teal-50/60 font-bold text-sm">
-                          <td className="p-2 text-slate-700">Total</td>
-                          <td className="p-2 text-right font-mono text-slate-700">₹{fmtMoney(dues[5])}</td>
-                          <td className="p-2 text-right font-mono text-emerald-700">₹{fmtMoney(alreadyCollected[5])}</td>
-                          <td className="p-2 text-right font-mono text-teal-700">₹{fmtMoney(thisPay[5])}</td>
-                          <td className="p-2 text-right font-mono text-slate-800">₹{fmtMoney(balance[5])}</td>
-                        </tr>
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-sm">
+                          {rows.map((r) => (
+                            <tr key={r.h.key}>
+                              <td className="p-2 font-bold text-slate-700">{r.h.label}</td>
+                              <td className="p-2 text-right font-mono text-slate-600">₹{fmtMoney(r.a)}</td>
+                              <td className="p-2 text-right font-mono text-emerald-700">₹{fmtMoney(r.e)}</td>
+                              <td className="p-2 text-right">
+                                <input
+                                  type="number" step="0.01" min="0"
+                                  value={collectionForm[accOf(r.h)]}
+                                  onChange={(ev) => setCollectionForm({ ...collectionForm, [accOf(r.h)]: ev.target.value })}
+                                  className={`w-full max-w-[120px] p-1.5 border rounded-lg outline-none font-medium text-right text-sm ${isQ ? 'border-amber-300 focus:ring-2 focus:ring-amber-500' : 'border-teal-300 focus:ring-2 focus:ring-teal-500'}`}
+                                />
+                              </td>
+                              <td className="p-2 text-right font-mono font-bold text-slate-800">₹{fmtMoney(r.bal)}</td>
+                            </tr>
+                          ))}
+                          <tr className={`font-bold text-sm ${isQ ? 'bg-amber-50/60' : 'bg-teal-50/60'}`}>
+                            <td className="p-2 text-slate-700">{collIs14B ? (isQ ? '7Q Total' : '14B Total') : 'Total'}</td>
+                            <td className="p-2 text-right font-mono text-slate-700">₹{fmtMoney(t.a)}</td>
+                            <td className="p-2 text-right font-mono text-emerald-700">₹{fmtMoney(t.e)}</td>
+                            <td className="p-2 text-right font-mono text-teal-700">₹{fmtMoney(t.p)}</td>
+                            <td className="p-2 text-right font-mono text-slate-800">₹{fmtMoney(t.bal)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                };
+                return (
+                  <div className="space-y-3">
+                    {payTable(false)}
+                    {collIs14B && payTable(true)}
                   </div>
                 );
               })()}
@@ -3001,7 +3048,8 @@ export default function App() {
               <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl flex justify-between items-center">
                 <span className="text-slate-600 font-bold uppercase">Total Collected This Payment</span>
                 <span className="text-teal-700 font-black text-xl">
-                  ₹{fmtMoney(ACCOUNT_HEADS.reduce((s, h) => s + (parseFloat(collectionForm[h.key]) || 0), 0))}
+                  ₹{fmtMoney(ACCOUNT_HEADS.reduce((s, h) => s + (parseFloat(collectionForm[h.key]) || 0)
+                    + (collIs14B ? (parseFloat(collectionForm[h.qkey]) || 0) : 0), 0))}
                 </span>
               </div>
 
@@ -3310,7 +3358,7 @@ export default function App() {
       {/* MODAL 10: EDIT COLLECTION */}
       {showEditCollectionModal && editCollection && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[80]">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 relative">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 relative max-h-[92vh] overflow-y-auto">
             <button
               onClick={() => setShowEditCollectionModal(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
@@ -3360,7 +3408,9 @@ export default function App() {
                 </div>
               </div>
               <div>
-                <label className="block text-slate-600 mb-1">Amount (A/c-wise)</label>
+                <label className="block text-slate-600 mb-1">
+                  {editCollection.inquiry_section === '14B' ? 'Section 14B — Amount (A/c-wise)' : 'Amount (A/c-wise)'}
+                </label>
                 <div className="grid grid-cols-5 gap-2">
                   {ACCOUNT_HEADS.map((h) => (
                     <div key={h.key}>
@@ -3377,6 +3427,27 @@ export default function App() {
                   ))}
                 </div>
               </div>
+
+              {editCollection.inquiry_section === '14B' && (
+                <div>
+                  <label className="block text-amber-700 mb-1">Section 7Q — Amount (A/c-wise)</label>
+                  <div className="grid grid-cols-5 gap-2">
+                    {ACCOUNT_HEADS.map((h) => (
+                      <div key={h.qkey}>
+                        <label className="block text-[10px] text-slate-500 mb-1">{h.label}</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={editCollectionForm[h.qkey]}
+                          onChange={(e) => setEditCollectionForm({ ...editCollectionForm, [h.qkey]: parseFloat(e.target.value) || 0 })}
+                          className="w-full p-2 border border-slate-300 rounded-lg outline-none font-medium text-center"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="pt-1 flex justify-end gap-2">
                 <button
                   type="button"

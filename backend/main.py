@@ -125,6 +125,11 @@ class CollectionRequest(BaseModel):
     account10: float = 0
     account21: float = 0
     account22: float = 0
+    q_account1: float = 0
+    q_account2: float = 0
+    q_account10: float = 0
+    q_account21: float = 0
+    q_account22: float = 0
 
 
 class CaseTrackingRequest(BaseModel):
@@ -169,6 +174,11 @@ class CollectionEditRequest(BaseModel):
     account10: Optional[float] = None
     account21: Optional[float] = None
     account22: Optional[float] = None
+    q_account1: Optional[float] = None
+    q_account2: Optional[float] = None
+    q_account10: Optional[float] = None
+    q_account21: Optional[float] = None
+    q_account22: Optional[float] = None
 
 
 def est_columns_select(prefix="e"):
@@ -469,6 +479,11 @@ def delete_redbook(case_no: str):
 @app.put("/api/collections/{collection_id}")
 def update_collection(collection_id: int, payload: CollectionEditRequest):
     """Edit a collection entry (payment received)."""
+    amount_keys = [
+        "account1", "account2", "account10", "account21", "account22",
+        "q_account1", "q_account2", "q_account10", "q_account21", "q_account22",
+    ]
+
     updates = {}
     if payload.collection_date is not None:
         updates["collection_date"] = payload.collection_date
@@ -476,7 +491,7 @@ def update_collection(collection_id: int, payload: CollectionEditRequest):
         updates["mode"] = payload.mode.upper()
     if payload.instrument_no is not None:
         updates["instrument_no"] = (payload.instrument_no or "").strip().upper()
-    for key in ["account1", "account2", "account10", "account21", "account22"]:
+    for key in amount_keys:
         val = getattr(payload, key)
         if val is not None:
             updates[key] = val
@@ -504,15 +519,14 @@ def update_collection(collection_id: int, payload: CollectionEditRequest):
                 detail=f"Cheque/DD number {updates['instrument_no']} already recorded for this case"
             )
 
-    # Recompute the running total for the entry.
-    cursor = db.execute(conn, "SELECT account1, account2, account10, account21, account22 FROM collections WHERE collection_id = ?", (collection_id,))
+    # Recompute the running total for the entry (14B heads + 7Q heads).
+    cursor = db.execute(
+        conn,
+        f"SELECT {', '.join(amount_keys)} FROM collections WHERE collection_id = ?",
+        (collection_id,),
+    )
     cur = cursor.fetchone()
-    account1 = updates.get("account1", cur["account1"] or 0)
-    account2 = updates.get("account2", cur["account2"] or 0)
-    account10 = updates.get("account10", cur["account10"] or 0)
-    account21 = updates.get("account21", cur["account21"] or 0)
-    account22 = updates.get("account22", cur["account22"] or 0)
-    updates["total_collected"] = account1 + account2 + account10 + account21 + account22
+    updates["total_collected"] = sum((updates.get(k, cur[k]) or 0) for k in amount_keys)
 
     set_clause = ", ".join(f"{col} = ?" for col in updates)
     params = list(updates.values()) + [collection_id]
@@ -554,7 +568,13 @@ def get_redbook(q: str = "", page: int = 1, limit: int = 10):
                 COALESCE(c.sum10, 0) AS collected10,
                 COALESCE(c.sum21, 0) AS collected21,
                 COALESCE(c.sum22, 0) AS collected22,
+                COALESCE(c.qsum1, 0) AS q_collected1,
+                COALESCE(c.qsum2, 0) AS q_collected2,
+                COALESCE(c.qsum10, 0) AS q_collected10,
+                COALESCE(c.qsum21, 0) AS q_collected21,
+                COALESCE(c.qsum22, 0) AS q_collected22,
                 COALESCE(c.sum_total, 0) AS total_collected,
+                COALESCE(c.qsum_total, 0) AS q_total_collected,
                 COALESCE(c.collection_count, 0) AS collection_count,
                 c.last_collection_date AS last_collection_date,
                 c.last_mode AS last_mode,
@@ -572,7 +592,13 @@ def get_redbook(q: str = "", page: int = 1, limit: int = 10):
                     SUM(account10) AS sum10,
                     SUM(account21) AS sum21,
                     SUM(account22) AS sum22,
+                    SUM(q_account1) AS qsum1,
+                    SUM(q_account2) AS qsum2,
+                    SUM(q_account10) AS qsum10,
+                    SUM(q_account21) AS qsum21,
+                    SUM(q_account22) AS qsum22,
                     SUM(total_collected) AS sum_total,
+                    SUM(q_account1 + q_account2 + q_account10 + q_account21 + q_account22) AS qsum_total,
                     COUNT(*) AS collection_count,
                     MAX(collection_date) AS last_collection_date,
                     (SELECT mode FROM collections c2 WHERE c2.case_no = collections.case_no ORDER BY collection_date DESC, collection_id DESC LIMIT 1) AS last_mode,
@@ -626,7 +652,9 @@ def get_collections(q: str = "", month: str = "", page: int = 1, limit: int = 10
         query = f"""
             SELECT
                 col.collection_id, col.case_no, col.est_id, col.collection_date, col.mode, col.instrument_no,
-                col.account1, col.account2, col.account10, col.account21, col.account22, col.total_collected,
+                col.account1, col.account2, col.account10, col.account21, col.account22,
+                col.q_account1, col.q_account2, col.q_account10, col.q_account21, col.q_account22,
+                col.total_collected,
                 r.order_date,
                 c7.inquiry_section, c7.assessing_officer, c7.period_from, c7.period_to,
                 {est_columns_select("e")}
@@ -687,9 +715,9 @@ def get_collections_monthly(year: Optional[int] = None):
         try:
             cursor = db.execute(conn, """
                 SELECT
-                    COALESCE(SUM(account1),0) AS a1, COALESCE(SUM(account2),0) AS a2,
-                    COALESCE(SUM(account10),0) AS a10, COALESCE(SUM(account21),0) AS a21,
-                    COALESCE(SUM(account22),0) AS a22, COALESCE(SUM(total_collected),0) AS total,
+                    COALESCE(SUM(account1 + q_account1),0) AS a1, COALESCE(SUM(account2 + q_account2),0) AS a2,
+                    COALESCE(SUM(account10 + q_account10),0) AS a10, COALESCE(SUM(account21 + q_account21),0) AS a21,
+                    COALESCE(SUM(account22 + q_account22),0) AS a22, COALESCE(SUM(total_collected),0) AS total,
                     COUNT(*) AS count
                 FROM collections WHERE substr(collection_date,1,7) = ?
             """, (ym,))
@@ -736,21 +764,28 @@ def add_collection(req: CollectionRequest):
                 detail=f"Cheque/DD number {instrument_no} already recorded for this case"
             )
 
-        total = req.account1 + req.account2 + req.account10 + req.account21 + req.account22
+        damages = req.account1 + req.account2 + req.account10 + req.account21 + req.account22
+        interest = req.q_account1 + req.q_account2 + req.q_account10 + req.q_account21 + req.q_account22
+        total = damages + interest
         returning = " RETURNING collection_id" if db.is_postgres() else ""
         cursor = db.execute(conn, f"""
             INSERT INTO collections
                 (case_no, est_id, collection_date, mode, instrument_no,
-                 account1, account2, account10, account21, account22, total_collected)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 account1, account2, account10, account21, account22,
+                 q_account1, q_account2, q_account10, q_account21, q_account22,
+                 total_collected)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             {returning}
         """, (
             req.case_no, row["est_id"], req.collection_date, req.mode.upper(), instrument_no,
-            req.account1, req.account2, req.account10, req.account21, req.account22, total
+            req.account1, req.account2, req.account10, req.account21, req.account22,
+            req.q_account1, req.q_account2, req.q_account10, req.q_account21, req.q_account22,
+            total
         ))
         conn.commit()
         collection_id = cursor.fetchone()["collection_id"] if db.is_postgres() else cursor.lastrowid
-        return {"success": True, "collection_id": collection_id, "total_collected": total}
+        return {"success": True, "collection_id": collection_id, "total_collected": total,
+                "damages": damages, "interest": interest}
     except HTTPException:
         raise
     except Exception as e:

@@ -210,6 +210,10 @@ def create_tables(conn):
         )
     """)
     ensure_column(conn, "collections", "instrument_no", "TEXT")
+    # Payment applied to the Section 7Q interest portion of a 14B case,
+    # account-wise. Zero for non-14B payments.
+    for col in ("q_account1", "q_account2", "q_account10", "q_account21", "q_account22"):
+        ensure_column(conn, "collections", col, "REAL DEFAULT 0")
 
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS aeo (
