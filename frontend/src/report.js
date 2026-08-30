@@ -23,7 +23,11 @@ const cls = (a) => (a === 'r' ? 'num' : a === 'c' ? 'ctr' : '');
 function renderSection(s) {
   const head = `<tr>${s.head.map((h, i) => `<th class="${cls(s.aligns && s.aligns[i])}">${esc(h)}</th>`).join('')}</tr>`;
   const body = s.rows && s.rows.length
-    ? s.rows.map((r) => `<tr>${r.map((c, i) => `<td class="${cls(s.aligns && s.aligns[i])}">${esc(c)}</td>`).join('')}</tr>`).join('')
+    ? s.rows.map((r) => {
+        const cells = Array.isArray(r) ? r : r.cells;
+        const trCls = (!Array.isArray(r) && r.cls) ? ` class="${r.cls}"` : '';
+        return `<tr${trCls}>${cells.map((c, i) => `<td class="${cls(s.aligns && s.aligns[i])}">${esc(c)}</td>`).join('')}</tr>`;
+      }).join('')
     : `<tr><td class="empty" colspan="${s.head.length}">No records</td></tr>`;
   const totalRows = !s.total
     ? []
@@ -68,6 +72,7 @@ td.ctr, th.ctr { text-align:center; }
 td.empty { text-align:center; color:#94a3b8; padding:12px; font-size:9px; }
 tfoot td { background:#e7edf5; font-weight:700; border:.5px solid #94a3b8; }
 tfoot tr:last-child td { background:#cfdcec; font-weight:800; }
+tbody tr.sub td { background:#cfdcec; font-weight:800; border:.5px solid #94a3b8; }
 tr { break-inside:avoid; }
 .foot { display:flex; justify-content:space-between; font-size:8.5px; color:#64748b;
   border-top:1px solid var(--line); padding:6px 4px 0; margin-top:6px; }

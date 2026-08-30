@@ -706,10 +706,10 @@ export default function App() {
             rMoney0(intr), rMoney0(qColl), rMoney0(intr - qColl)];
         }
         if (r._part === 'sub') {
-          return ['', '', '↳ 14B + 7Q sub-total', '', '', '', '', '', '',
+          return { cls: 'sub', cells: ['', '', '↳ 14B + 7Q sub-total', '', '', '', '', '', '',
             ...ACC_KEYS.map((k, idx) => rMoney0((r[k] || 0) + (r[Q_KEYS[idx]] || 0))),
             rMoney0(r.total_assessed), rMoney0(r.total_collected),
-            rMoney0((r.total_assessed || 0) - (r.total_collected || 0))];
+            rMoney0((r.total_assessed || 0) - (r.total_collected || 0))] };
         }
         const is14BRow = r._part === '14B';
         return [
@@ -757,9 +757,9 @@ export default function App() {
             rMoney0(intr), '', ''];
         }
         if (c._part === 'sub') {
-          return ['', '', '', '↳ 14B + 7Q sub-total', '', '', '', '', '',
+          return { cls: 'sub', cells: ['', '', '', '↳ 14B + 7Q sub-total', '', '', '', '', '',
             ...ACC_KEYS.map((k, idx) => rMoney0((c[k] || 0) + (c[Q_KEYS[idx]] || 0))),
-            rMoney0(c.total_collected), '', ''];
+            rMoney0(c.total_collected), '', ''] };
         }
         const is14BRow = c._part === '14B';
         return [
