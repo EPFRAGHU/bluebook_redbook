@@ -1770,47 +1770,101 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="text-xs divide-y divide-slate-100">
-                  {collectionsData.data.map((col) => (
-                    <tr key={col.collection_id} className="hover:bg-teal-50/30">
-                      <td className="p-3 font-mono font-bold text-teal-700 whitespace-nowrap">{col.est_id}</td>
-                      <td className="p-3 font-semibold text-slate-800">{col.EST_NAME || 'N/A'}</td>
-                      <td className="p-3 text-slate-600 whitespace-nowrap">{rowAeo(col)}</td>
-                      <td className="p-3"><span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{col.inquiry_section || '7A'}</span></td>
-                      <td className="p-3 text-slate-600">{col.assessing_officer}</td>
-                      <td className="p-3 text-slate-500">{col.period_from} to {col.period_to}</td>
-                      <td className="p-3 font-semibold text-slate-700">{col.order_date}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account1 || 0) + (col.q_account1 || 0))}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account2 || 0) + (col.q_account2 || 0))}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account10 || 0) + (col.q_account10 || 0))}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account21 || 0) + (col.q_account21 || 0))}</td>
-                      <td className="p-3 text-right font-mono">₹{fmtMoney((col.account22 || 0) + (col.q_account22 || 0))}</td>
-                      <td className="p-3 text-right font-mono font-bold text-teal-700">₹{fmtMoney(col.total_collected)}</td>
-                      <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{col.collection_date}</td>
-                      <td className="p-3 font-mono font-bold text-slate-700">{col.instrument_no || '—'}</td>
-                      <td className="p-3">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${col.mode === 'DD' ? 'bg-amber-100 text-amber-700' : 'bg-teal-100 text-teal-700'}`}>
-                          {col.mode || 'CHEQUE'}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => openEditCollectionModal(col)}
-                            title="Edit collection entry"
-                            className="bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-700 p-1.5 rounded-lg transition">
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            onClick={() => deleteCollection(col)}
-                            title="Delete collection entry"
-                            className="bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 p-1.5 rounded-lg transition">
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {collectionsData.data.flatMap((col) => {
+                    const M = (v) => `₹${fmtMoney(v)}`;
+                    const dmg = ACC_KEYS.reduce((s, k) => s + (col[k] || 0), 0);
+                    const intr = Q_KEYS.reduce((s, k) => s + (col[k] || 0), 0);
+                    const has7Q = (col.inquiry_section === '14B') && intr > 0;
+
+                    const mainRow = (
+                      <tr key={col.collection_id} className="hover:bg-teal-50/30">
+                        <td className="p-3 font-mono font-bold text-teal-700 whitespace-nowrap">{col.est_id}</td>
+                        <td className="p-3 font-semibold text-slate-800">{col.EST_NAME || 'N/A'}</td>
+                        <td className="p-3 text-slate-600 whitespace-nowrap">{rowAeo(col)}</td>
+                        <td className="p-3"><span className="bg-indigo-50 border border-indigo-200 text-indigo-600 px-2 py-0.5 rounded-md font-bold">{has7Q ? '14B' : (col.inquiry_section || '7A')}</span></td>
+                        <td className="p-3 text-slate-600">{col.assessing_officer}</td>
+                        <td className="p-3 text-slate-500">{col.period_from} to {col.period_to}</td>
+                        <td className="p-3 font-semibold text-slate-700">{col.order_date}</td>
+                        {ACC_KEYS.map((k) => <td key={k} className="p-3 text-right font-mono">{M(col[k] || 0)}</td>)}
+                        <td className="p-3 text-right font-mono font-bold text-teal-700">{M(has7Q ? dmg : col.total_collected)}</td>
+                        <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{col.collection_date}</td>
+                        <td className="p-3 font-mono font-bold text-slate-700">{col.instrument_no || '—'}</td>
+                        <td className="p-3">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${col.mode === 'DD' ? 'bg-amber-100 text-amber-700' : 'bg-teal-100 text-teal-700'}`}>
+                            {col.mode || 'CHEQUE'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => openEditCollectionModal(col)} title="Edit collection entry" className="bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-700 p-1.5 rounded-lg transition">
+                              <Pencil size={14} />
+                            </button>
+                            <button onClick={() => deleteCollection(col)} title="Delete collection entry" className="bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 p-1.5 rounded-lg transition">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                    if (!has7Q) return [mainRow];
+
+                    const qRow = (
+                      <tr key={col.collection_id + '-q'} className="bg-amber-50/40">
+                        <td className="p-3"></td>
+                        <td className="p-3 text-[10px] text-slate-400">↳ 7Q interest</td>
+                        <td className="p-3"></td>
+                        <td className="p-3"><span className="bg-amber-50 border border-amber-200 text-amber-700 px-2 py-0.5 rounded-md font-bold">7Q</span></td>
+                        <td className="p-3"></td><td className="p-3"></td><td className="p-3"></td>
+                        {Q_KEYS.map((k) => <td key={k} className="p-3 text-right font-mono text-amber-800">{M(col[k] || 0)}</td>)}
+                        <td className="p-3 text-right font-mono font-bold text-amber-800">{M(intr)}</td>
+                        <td className="p-3"></td><td className="p-3"></td><td className="p-3"></td><td className="p-3"></td>
+                      </tr>
+                    );
+                    const subRow = (
+                      <tr key={col.collection_id + '-sub'} className="bg-slate-200 font-bold">
+                        <td className="p-3"></td>
+                        <td className="p-3 text-slate-700">↳ 14B + 7Q sub-total</td>
+                        <td className="p-3"></td><td className="p-3"></td><td className="p-3"></td><td className="p-3"></td><td className="p-3"></td>
+                        {ACC_KEYS.map((k, i) => <td key={k} className="p-3 text-right font-mono text-slate-800">{M((col[k] || 0) + (col[Q_KEYS[i]] || 0))}</td>)}
+                        <td className="p-3 text-right font-mono text-teal-800">{M(col.total_collected)}</td>
+                        <td className="p-3"></td><td className="p-3"></td><td className="p-3"></td><td className="p-3"></td>
+                      </tr>
+                    );
+                    return [mainRow, qRow, subRow];
+                  })}
                 </tbody>
+                <tfoot className="text-xs">
+                  {(() => {
+                    const rows = collectionsData.data;
+                    const secOf = (c) => c.inquiry_section || '7A';
+                    const order = ['7A', '7B', '7Q', '14B'];
+                    const secs = [...new Set(rows.map(secOf))].filter((s) => s !== '7Q')
+                      .sort((a, b) => (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)));
+                    const sevenQ = rows.filter((r) => secOf(r) === '7Q');
+                    const qCells = ACC_KEYS.map((k, i) => sumBy(rows, (r) => r[Q_KEYS[i]]) + sumBy(sevenQ, (r) => r[k]));
+                    const qTot = sumBy(rows, (r) => Q_KEYS.reduce((s, k) => s + (r[k] || 0), 0)) + sumBy(sevenQ, (r) => ACC_KEYS.reduce((s, k) => s + (r[k] || 0), 0));
+
+                    const footRow = (label, cells, tot, strong) => (
+                      <tr key={label} className={strong ? 'bg-slate-300 font-black text-slate-900' : 'bg-slate-100 font-bold text-slate-800'}>
+                        <td className="p-3 uppercase tracking-wide" colSpan={7}>{label}</td>
+                        {cells.map((v, i) => <td key={i} className="p-3 text-right font-mono">₹{fmtMoney(v)}</td>)}
+                        <td className="p-3 text-right font-mono text-teal-800">₹{fmtMoney(tot)}</td>
+                        <td className="p-3" colSpan={4}></td>
+                      </tr>
+                    );
+
+                    const out = secs.map((sec) => {
+                      const r = rows.filter((x) => secOf(x) === sec);
+                      return footRow(`Section ${sec}`, ACC_KEYS.map((k) => sumBy(r, (x) => x[k])),
+                        sumBy(r, (x) => ACC_KEYS.reduce((s, k) => s + (x[k] || 0), 0)), false);
+                    });
+                    if (qTot > 0) out.push(footRow('Section 7Q', qCells, qTot, false));
+                    out.push(footRow('Grand Total (7A + 14B + 7Q)',
+                      ACC_KEYS.map((k, i) => sumBy(rows, (x) => (x[k] || 0) + (x[Q_KEYS[i]] || 0))),
+                      sumBy(rows, (x) => x.total_collected), true));
+                    return out;
+                  })()}
+                </tfoot>
               </table>
             </div>
           ) : (
