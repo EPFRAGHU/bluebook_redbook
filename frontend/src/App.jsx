@@ -661,6 +661,11 @@ export default function App() {
   const nowStamp = () => new Date().toLocaleString('en-IN');
   const AEO_NA = '— Not assigned —';
 
+  // Column-wise sums of a key list across records → array of ₹ strings.
+  const colSum = (rows, keys) => keys.map((k) => rMoney0(sumBy(rows, (r) => r[k])));
+  const keyTotal = (rows, keys) => sumBy(rows, (r) => keys.reduce((s, k) => s + (r[k] || 0), 0));
+  const has7QRows = (rows) => rows.some((r) => r.inquiry_section === '14B' && keyTotal([r], Q_KEYS) > 0);
+
   // Shared column definition for the three case-list modules.
   const CASE_COLS = {
     head: ['Sr', 'Case No', 'Establishment', 'Est Code', 'Sec', 'Assessing Officer', 'AEO', 'Period', 'Initiated', 'Hearing #', 'Next Hearing', 'Status', 'Amount Received'],
@@ -713,11 +718,21 @@ export default function App() {
           rMoney(is14BRow ? (dmg - dmgColl) : ((r.total_assessed || 0) - (r.total_collected || 0))),
         ];
       },
-      total: (rows) => ['', '', '', '', '', '', '', '', 'TOTAL',
-        ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
-        rMoney0(sumBy(rows, (r) => r.total_assessed)),
-        rMoney0(sumBy(rows, (r) => r.total_collected)),
-        rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))],
+      total: (rows) => {
+        const grand = ['', '', '', '', '', '', '', '', has7QRows(rows) ? 'GRAND TOTAL' : 'TOTAL',
+          ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
+          rMoney0(sumBy(rows, (r) => r.total_assessed)),
+          rMoney0(sumBy(rows, (r) => r.total_collected)),
+          rMoney0(sumBy(rows, (r) => (r.total_assessed || 0) - (r.total_collected || 0)))];
+        if (!has7QRows(rows)) return grand;
+        const dA = keyTotal(rows, ACC_KEYS), dC = keyTotal(rows, COLL_KEYS);
+        const iA = keyTotal(rows, Q_KEYS), iC = keyTotal(rows, Q_COLL_KEYS);
+        return [
+          ['', '', '', '', '', '', '', '', 'Sub-total · 14B / Principal', ...colSum(rows, ACC_KEYS), rMoney0(dA), rMoney0(dC), rMoney0(dA - dC)],
+          ['', '', '', '', '', '', '', '', 'Sub-total · 7Q Interest', ...colSum(rows, Q_KEYS), rMoney0(iA), rMoney0(iC), rMoney0(iA - iC)],
+          grand,
+        ];
+      },
       summaryHead: (label) => ['Sr', label, 'Cases', 'Total Assessed', 'Total Collected', 'Balance'],
       summaryAligns: ['r', 'l', 'r', 'r', 'r', 'r'],
       summaryRow: (key, rows, i) => [i + 1, key, rows.length,
@@ -755,9 +770,17 @@ export default function App() {
           rMoney(is14BRow ? dmg : c.total_collected), rDash(c.instrument_no), c.mode || 'CHEQUE',
         ];
       },
-      total: (rows) => ['', '', '', '', '', '', '', '', 'TOTAL',
-        ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
-        rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''],
+      total: (rows) => {
+        const grand = ['', '', '', '', '', '', '', '', has7QRows(rows) ? 'GRAND TOTAL' : 'TOTAL',
+          ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
+          rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''];
+        if (!has7QRows(rows)) return grand;
+        return [
+          ['', '', '', '', '', '', '', '', 'Sub-total · 14B / Principal', ...colSum(rows, ACC_KEYS), rMoney0(keyTotal(rows, ACC_KEYS)), '', ''],
+          ['', '', '', '', '', '', '', '', 'Sub-total · 7Q Interest', ...colSum(rows, Q_KEYS), rMoney0(keyTotal(rows, Q_KEYS)), '', ''],
+          grand,
+        ];
+      },
       summaryHead: (label) => ['Sr', label, 'Entries', 'Total Collected'],
       summaryAligns: ['r', 'l', 'r', 'r'],
       summaryRow: (key, rows, i) => [i + 1, key, rows.length, rMoney0(sumBy(rows, (r) => r.total_collected))],

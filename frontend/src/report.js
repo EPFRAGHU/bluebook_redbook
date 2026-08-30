@@ -25,8 +25,11 @@ function renderSection(s) {
   const body = s.rows && s.rows.length
     ? s.rows.map((r) => `<tr>${r.map((c, i) => `<td class="${cls(s.aligns && s.aligns[i])}">${esc(c)}</td>`).join('')}</tr>`).join('')
     : `<tr><td class="empty" colspan="${s.head.length}">No records</td></tr>`;
-  const foot = s.total
-    ? `<tfoot><tr>${s.total.map((c, i) => `<td class="${cls(s.aligns && s.aligns[i])}">${esc(c)}</td>`).join('')}</tr></tfoot>`
+  const totalRows = !s.total
+    ? []
+    : (Array.isArray(s.total[0]) ? s.total : (s.total.length ? [s.total] : []));
+  const foot = totalRows.length
+    ? `<tfoot>${totalRows.map((tr) => `<tr>${tr.map((c, i) => `<td class="${cls(s.aligns && s.aligns[i])}">${esc(c)}</td>`).join('')}</tr>`).join('')}</tfoot>`
     : '';
   return `<section class="sec${s.pageBreak ? ' brk' : ''}">${s.caption ? `<h3>${esc(s.caption)}</h3>` : ''}<table><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></section>`;
 }
@@ -63,7 +66,8 @@ tbody tr:nth-child(even) td { background:#f1f5f9; }
 td.num, th.num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
 td.ctr, th.ctr { text-align:center; }
 td.empty { text-align:center; color:#94a3b8; padding:12px; font-size:9px; }
-tfoot td { background:#dbe4f0; font-weight:800; border:.5px solid #94a3b8; }
+tfoot td { background:#e7edf5; font-weight:700; border:.5px solid #94a3b8; }
+tfoot tr:last-child td { background:#cfdcec; font-weight:800; }
 tr { break-inside:avoid; }
 .foot { display:flex; justify-content:space-between; font-size:8.5px; color:#64748b;
   border-top:1px solid var(--line); padding:6px 4px 0; margin-top:6px; }
