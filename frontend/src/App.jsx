@@ -1669,7 +1669,8 @@ export default function App() {
                 <IndianRupee size={20} className="text-teal-600" /> Collection Register (Month-wise)
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                Payments received (Cheque / DD) against Red Book cases, stored month-wise.
+                Payments received (Cheque / DD) against Red Book cases. Click a month row to see that
+                month's collections below; click <strong>FY Total</strong> for all months.
               </p>
             </div>
 
@@ -1679,17 +1680,6 @@ export default function App() {
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition">
                 <Download size={14} /> Save as PDF
               </button>
-              <select
-                value={collectionMonth}
-                onChange={(e) => setCollectionMonth(e.target.value)}
-                className="p-2 border border-slate-300 rounded-lg outline-none font-semibold bg-white text-xs">
-                <option value="">All Months</option>
-                {monthlyCollections.months.map((mo, i) => (
-                  <option key={i} value={mo.ym || ''}>
-                    {mo.month}
-                  </option>
-                ))}
-              </select>
               <span className="text-xs font-bold text-slate-500">FY {monthlyCollections.fy || `...`}</span>
             </div>
           </div>
@@ -1711,24 +1701,70 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="text-xs divide-y divide-slate-100">
-                  {monthlyCollections.months.map((mo, i) => (
-                    <tr key={i} className={mo.total > 0 ? 'font-semibold bg-teal-50/30' : 'hover:bg-slate-50'}>
-                      <td className="p-3 font-bold text-slate-800">{mo.month}</td>
-                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account1)}` : '—'}</td>
-                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account2)}` : '—'}</td>
-                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account10)}` : '—'}</td>
-                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account21)}` : '—'}</td>
-                      <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account22)}` : '—'}</td>
-                      <td className="p-3 text-right font-mono font-bold text-teal-700">{mo.total ? `₹${fmtMoney(mo.total)}` : '—'}</td>
-                      <td className="p-3 text-center font-bold text-slate-700">{mo.count}</td>
-                    </tr>
-                  ))}
+                  {monthlyCollections.months.map((mo, i) => {
+                    const selected = collectionMonth === mo.ym;
+                    return (
+                      <tr
+                        key={i}
+                        onClick={() => setCollectionMonth(mo.ym)}
+                        title="Click to see this month's collections below"
+                        className={`cursor-pointer transition ${
+                          selected
+                            ? 'bg-teal-100 ring-2 ring-inset ring-teal-500 font-bold'
+                            : mo.total > 0 ? 'font-semibold bg-teal-50/30 hover:bg-teal-100/50' : 'text-slate-400 hover:bg-slate-50'
+                        }`}>
+                        <td className="p-3 font-bold text-slate-800">{mo.month}</td>
+                        <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account1)}` : '—'}</td>
+                        <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account2)}` : '—'}</td>
+                        <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account10)}` : '—'}</td>
+                        <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account21)}` : '—'}</td>
+                        <td className="p-3 text-right font-mono text-slate-700">{mo.total ? `₹${fmtMoney(mo.account22)}` : '—'}</td>
+                        <td className="p-3 text-right font-mono font-bold text-teal-700">{mo.total ? `₹${fmtMoney(mo.total)}` : '—'}</td>
+                        <td className="p-3 text-center font-bold text-slate-700">{mo.count}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
+                <tfoot>
+                  {(() => {
+                    const ms = monthlyCollections.months;
+                    const s = (k) => ms.reduce((a, m) => a + (m[k] || 0), 0);
+                    const selected = !collectionMonth;
+                    return (
+                      <tr
+                        onClick={() => setCollectionMonth('')}
+                        title="Click to see all months' collections below"
+                        className={`cursor-pointer transition text-xs uppercase tracking-wide ${
+                          selected ? 'bg-teal-200 ring-2 ring-inset ring-teal-600 font-black' : 'bg-slate-100 font-bold hover:bg-slate-200'
+                        }`}>
+                        <td className="p-3 text-slate-900">FY Total</td>
+                        <td className="p-3 text-right font-mono">₹{fmtMoney(s('account1'))}</td>
+                        <td className="p-3 text-right font-mono">₹{fmtMoney(s('account2'))}</td>
+                        <td className="p-3 text-right font-mono">₹{fmtMoney(s('account10'))}</td>
+                        <td className="p-3 text-right font-mono">₹{fmtMoney(s('account21'))}</td>
+                        <td className="p-3 text-right font-mono">₹{fmtMoney(s('account22'))}</td>
+                        <td className="p-3 text-right font-mono text-teal-800">₹{fmtMoney(s('total'))}</td>
+                        <td className="p-3 text-center">{s('count')}</td>
+                      </tr>
+                    );
+                  })()}
+                </tfoot>
               </table>
             </div>
           )}
 
           {/* COLLECTION ENTRIES */}
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h3 className="text-sm font-bold text-slate-700">
+              Collections —{' '}
+              <span className="text-teal-700">
+                {collectionMonth
+                  ? (monthlyCollections.months.find((m) => m.ym === collectionMonth)?.month || collectionMonth)
+                  : `All months (FY ${monthlyCollections.fy || '…'})`}
+              </span>
+            </h3>
+            <span className="text-xs text-slate-400">{collectionsData.data.length} row{collectionsData.data.length === 1 ? '' : 's'}</span>
+          </div>
           <div className="relative mb-4">
             <input
               type="text"
