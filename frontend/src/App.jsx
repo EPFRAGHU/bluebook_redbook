@@ -732,14 +732,29 @@ export default function App() {
       head: ['Sr', 'Payment Date', 'Est Code', 'Establishment', 'AEO', 'Sec', 'Officer', 'Period', 'Order Date',
         'A/c 1', 'A/c 2', 'A/c 10', 'A/c 21', 'A/c 22', 'Total Collected', 'Cheque / DD No.', 'Mode'],
       aligns: ['r', 'c', 'l', 'l', 'l', 'c', 'l', 'l', 'c', 'r', 'r', 'r', 'r', 'r', 'r', 'l', 'c'],
-      row: (c, i) => [
-        i + 1, rDash(c.collection_date), c.est_id, c.EST_NAME || 'N/A', rowAeo(c),
-        c.inquiry_section || '7A', rDash(c.assessing_officer), rPeriod(c), rDash(c.order_date),
-        rMoney((c.account1 || 0) + (c.q_account1 || 0)), rMoney((c.account2 || 0) + (c.q_account2 || 0)),
-        rMoney((c.account10 || 0) + (c.q_account10 || 0)), rMoney((c.account21 || 0) + (c.q_account21 || 0)),
-        rMoney((c.account22 || 0) + (c.q_account22 || 0)),
-        rMoney(c.total_collected), rDash(c.instrument_no), c.mode || 'CHEQUE',
-      ],
+      // A payment against a 14B case with a 7Q portion prints as two rows.
+      expand: (c) => {
+        const qTot = Q_KEYS.reduce((s, k) => s + (c[k] || 0), 0);
+        return (c.inquiry_section === '14B' && qTot > 0)
+          ? [{ ...c, _part: '14B' }, { ...c, _part: '7Q' }]
+          : [c];
+      },
+      row: (c, i) => {
+        const dmg = ACC_KEYS.reduce((s, k) => s + (c[k] || 0), 0);
+        const intr = Q_KEYS.reduce((s, k) => s + (c[k] || 0), 0);
+        if (c._part === '7Q') {
+          return ['', '', '', '', '', '7Q', '', '', '',
+            rMoney(c.q_account1), rMoney(c.q_account2), rMoney(c.q_account10), rMoney(c.q_account21), rMoney(c.q_account22),
+            rMoney0(intr), '', ''];
+        }
+        const is14BRow = c._part === '14B';
+        return [
+          i + 1, rDash(c.collection_date), c.est_id, c.EST_NAME || 'N/A', rowAeo(c),
+          is14BRow ? '14B' : (c.inquiry_section || '7A'), rDash(c.assessing_officer), rPeriod(c), rDash(c.order_date),
+          rMoney(c.account1), rMoney(c.account2), rMoney(c.account10), rMoney(c.account21), rMoney(c.account22),
+          rMoney(is14BRow ? dmg : c.total_collected), rDash(c.instrument_no), c.mode || 'CHEQUE',
+        ];
+      },
       total: (rows) => ['', '', '', '', '', '', '', '', 'TOTAL',
         ...ACC_KEYS.map((k, idx) => rMoney0(sumBy(rows, (r) => (r[k] || 0) + (r[Q_KEYS[idx]] || 0)))),
         rMoney0(sumBy(rows, (r) => r.total_collected)), '', ''],
