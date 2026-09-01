@@ -12,11 +12,16 @@ dialect; the execute() helper translates them to PostgreSQL syntax on the fly.
 
 import os
 import sqlite3
+import threading
 
 import psycopg2
 import psycopg2.extras
+from psycopg2.pool import ThreadedConnectionPool
 
 SQLITE_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "database.db")
+
+_pg_pool = None
+_pg_pool_lock = threading.Lock()
 
 
 def is_postgres() -> bool:
@@ -26,12 +31,97 @@ def is_postgres() -> bool:
 def get_db_connection():
     """Return a connection whose cursor exposes dict-like rows (row['col'])."""
     if is_postgres():
-        conn = psycopg2.connect(os.environ["DATABASE_URL"])
-        conn.cursor_factory = psycopg2.extras.RealDictCursor
-        return conn
+        return _get_pg_connection()
     conn = sqlite3.connect(SQLITE_DB)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _get_pg_connection():
+    """Return a pooled PostgreSQL connection (kept alive across requests).
+
+    In production the app is single-process (gunicorn --workers 1), so a small
+    in-process pool is enough. The 'close()' call made by callers returns the
+    connection to the pool instead of dropping it, avoiding a fresh TCP+TLS
+    handshake (and Neon cold-start) on every request.
+    """
+    global _pg_pool
+    dsn = os.environ["DATABASE_URL"]
+    if _pg_pool is None:
+        with _pg_pool_lock:
+            if _pg_pool is None:
+                _pg_pool = _create_pool(dsn)
+    conn = _pg_pool.getconn()
+    conn.cursor_factory = psycopg2.extras.RealDictCursor
+    return _PooledPgConnection(conn)
+
+
+class _PooledPgConnection:
+    """Proxy that forwards everything to a psycopg2 connection but routes
+    .close() back to the pool so app code can keep calling conn.close()."""
+
+    __slots__ = ("_wrapped",)
+
+    def __init__(self, wrapped):
+        self._wrapped = wrapped
+
+    def close(self):
+        _return_pg_connection(self._wrapped)
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+    def __enter__(self):
+        return self._wrapped.__enter__()
+
+    def __exit__(self, *exc):
+        return self._wrapped.__exit__(*exc)
+
+
+def _return_pg_connection(conn):
+    """Return a connection to the in-process pool (idempotent, safe if broken)."""
+    try:
+        if getattr(conn, "closed", False):
+            _pg_pool.putconn(conn, close=True)
+        else:
+            _pg_pool.putconn(conn)
+    except Exception:
+        try:
+            _pg_pool.putconn(conn, close=True)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def close_db_connection(conn):
+    """Return a PostgreSQL connection to the pool (or close an SQLite one)."""
+    if is_postgres():
+        if isinstance(conn, _PooledPgConnection):
+            conn.close()
+        else:
+            _return_pg_connection(conn)
+    else:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _create_pool(dsn):
+    try:
+        return ThreadedConnectionPool(
+            minconn=1,
+            maxconn=10,
+            dsn=dsn,
+            connect_timeout=10,
+            cursor_factory=psycopg2.extras.RealDictCursor,
+        )
+    except TypeError:
+        # Older psycopg2 doesn't accept cursor_factory in the pool ctor.
+        pool = ThreadedConnectionPool(1, 10, dsn, connect_timeout=10)
+        return pool
 
 
 def _translate(sql: str) -> str:
