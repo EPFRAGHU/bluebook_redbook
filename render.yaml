@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: bluebook-redbook
+    name: bluebook-redbook-sg
     runtime: python
     plan: free
     region: singapore
